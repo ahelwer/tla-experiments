@@ -1,24 +1,16 @@
 ----------------------------- MODULE Blockchain -----------------------------
 CONSTANTS
     Hash,
+    CalcHash(_),
+    GetHash(_),
     Value
 
 VARIABLES
-    HashFunction,
-    CreatedBlocks,
-    ConfirmedBlocks,
-    Top
+    createdBlocks,
+    confirmedBlocks,
+    top
 
 -----------------------------------------------------------------------------
-
-NoHash == CHOOSE h : h \notin Hash
-
-HashIsUndefined(h) ==
-    /\ \A pair \in HashFunction :
-        /\ pair[2] /= h
-
-DefineHash(b, h) ==
-    /\ HashFunction' = HashFunction \cup {<<b, h>>}
 
 GenesisBlock ==
     [value : Value]
@@ -31,16 +23,18 @@ Block == GenesisBlock \cup TransactionBlock
 
 NoBlock == CHOOSE b : b \notin Block
 
+HF ==
+    INSTANCE HashFunctionInterface WITH
+        Data <- Block
+
 TypeInvariant ==
-    /\ HashGenerator \in Nat
-    /\ HashFunction \subseteq Block \X Hash
-    /\ CreatedBlocks \subseteq Value
-    /\ ConfirmedBlocks \in [Hash -> Block \cup {NoBlock}]
-    /\ Top \in Hash
+    /\ createdBlocks \subseteq Value
+    /\ confirmedBlocks \in [Hash -> Block \cup {NoBlock}]
+    /\ top \in Hash \cup {HF!NoHash}
 
 RECURSIVE ChainContainsCycles(_,_)
 ChainContainsCycles(hash, discovered) ==
-    LET block == ConfirmedBlocks[hash] IN
+    LET block == confirmedBlocks[hash] IN
     IF hash \in discovered
     THEN TRUE
     ELSE
@@ -50,47 +44,47 @@ ChainContainsCycles(hash, discovered) ==
 
 RECURSIVE BlocksInChain(_)
 BlocksInChain(hash) ==
-    LET block == ConfirmedBlocks[hash] IN
+    LET block == confirmedBlocks[hash] IN
     IF block \in GenesisBlock
     THEN {hash}
     ELSE {hash} \cup BlocksInChain(block.previous)
 
 SafetyInvariant ==
-    /\ ~ChainContainsCycles(Top, {})
+    /\ ~ChainContainsCycles(top, {})
     /\ \A h \in Hash :
-        LET blocksInChain == BlocksInChain(Top) IN
-        /\ ConfirmedBlocks[h] /= NoBlock <=> h \in blocksInChain
+        LET blocksInChain == BlocksInChain(top) IN
+        /\ confirmedBlocks[h] /= NoBlock <=> h \in blocksInChain
 
 Init ==
-    /\ \E v \in Value :
-        LET genesisBlock == [value |-> v] IN
-        /\ \E genesisHash \in Hash :
-            /\ HashFunction = {<<genesisBlock, genesisHash>>}
-            /\ ConfirmedBlocks =
-                [h \in Hash |->
-                    IF h = genesisHash
-                    THEN genesisBlock
-                    ELSE NoBlock]
-            /\ Top = genesisHash
-    /\ CreatedBlocks = {}
+    /\ createdBlocks = {}
+    /\ confirmedBlocks = [h \in Hash |-> NoBlock]
+    /\ top = HF!NoHash
+
+Genesis(v) ==
+    LET genesisBlock == [value |-> v] IN
+    /\ CalcHash(genesisBlock)
+    /\ top = HF!NoHash
+    /\ confirmedBlocks' =
+        [confirmedBlocks EXCEPT
+            ![GetHash(genesisBlock)] = genesisBlock]
+    /\ top' = GetHash(genesisBlock)
 
 CreateBlock(v) ==
-    /\ CreatedBlocks' = CreatedBlocks \cup {v}
-    /\ UNCHANGED <<HashFunction, ConfirmedBlocks, Top>>
+    /\ createdBlocks' = createdBlocks \cup {v}
+    /\ UNCHANGED <<confirmedBlocks, top>>
 
 ConfirmBlock(v) ==
-    LET newBlock == [previous |-> Top, value |-> v] IN
-    /\ \E newHash \in Hash :
-        /\ HashIsUndefined(newHash)
-        /\ DefineHash(newBlock, newHash)
-        /\ ConfirmedBlocks' =
-            [ConfirmedBlocks EXCEPT
-                ![newHash] = newBlock]
-        /\ CreatedBlocks' = CreatedBlocks \ {v}
-        /\ Top' = newHash
+    LET newBlock == [previous |-> top, value |-> v] IN
+    /\ CalcHash(newBlock)
+    /\ confirmedBlocks' =
+        [confirmedBlocks EXCEPT
+            ![GetHash(newBlock)] = newBlock]
+    /\ createdBlocks' = createdBlocks \ {v}
+    /\ top' = GetHash(newBlock)
 
 Next ==
+    \/ \E v \in Value : Genesis(v)
     \/ \E v \in Value : CreateBlock(v)
-    \/ \E v \in CreatedBlocks : ConfirmBlock(v)
+    \/ \E v \in createdBlocks : ConfirmBlock(v)
 
 =============================================================================
