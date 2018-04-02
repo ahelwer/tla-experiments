@@ -5,6 +5,8 @@ EXTENDS
     Sequences
 
 CONSTANTS
+    CalcHash(_),
+    GetHash(_),
     MaxHashCount,
     Value
 
@@ -21,24 +23,24 @@ Hash == 1 .. MaxHashCount
 UndefinedHashesExist ==
     Len(hashFunction) < MaxHashCount
 
-CalcHash(block) ==
+CalcHashImpl(block) ==
     /\ UndefinedHashesExist
     /\ hashFunction' = Append(hashFunction, block)
 
-GetHash(block) ==
-    CHOOSE h \in DOMAIN hashFunction : hashFunction[h] = block
+GetHashImpl(block) ==
+    CHOOSE h \in DOMAIN hashFunction' : hashFunction'[h] = block
 
 BC == INSTANCE Blockchain
 
 TypeInvariant ==
-    /\ hashFunction \in [Hash -> BC!Block \cup {BC!NoBlock}]
+    /\ hashFunction \in Seq(BC!Block)
     /\ BC!TypeInvariant
 
 SafetyInvariant ==
     /\ BC!SafetyInvariant
 
 Init ==
-    /\ hashFunction = [h \in Hash |-> BC!NoBlock]
+    /\ hashFunction = <<>>
     /\ BC!Init
 
 Genesis(v) ==
@@ -47,6 +49,7 @@ Genesis(v) ==
 
 CreateBlock(v) ==
     /\ BC!CreateBlock(v)
+    /\ UNCHANGED hashFunction
 
 ConfirmBlock(v) ==
     /\ UndefinedHashesExist

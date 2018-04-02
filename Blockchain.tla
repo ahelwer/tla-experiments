@@ -12,6 +12,8 @@ VARIABLES
 
 -----------------------------------------------------------------------------
 
+NoHash == CHOOSE h : h \notin Hash
+
 GenesisBlock ==
     [value : Value]
 
@@ -23,14 +25,10 @@ Block == GenesisBlock \cup TransactionBlock
 
 NoBlock == CHOOSE b : b \notin Block
 
-HF ==
-    INSTANCE HashFunctionInterface WITH
-        Data <- Block
-
 TypeInvariant ==
     /\ createdBlocks \subseteq Value
     /\ confirmedBlocks \in [Hash -> Block \cup {NoBlock}]
-    /\ top \in Hash \cup {HF!NoHash}
+    /\ top \in Hash \cup {NoHash}
 
 RECURSIVE ChainContainsCycles(_,_)
 ChainContainsCycles(hash, discovered) ==
@@ -50,31 +48,39 @@ BlocksInChain(hash) ==
     ELSE {hash} \cup BlocksInChain(block.previous)
 
 SafetyInvariant ==
-    /\ ~ChainContainsCycles(top, {})
-    /\ \A h \in Hash :
-        LET blocksInChain == BlocksInChain(top) IN
-        /\ confirmedBlocks[h] /= NoBlock <=> h \in blocksInChain
+    /\ top = NoHash =>
+        /\ \A h \in Hash :
+            /\ createdBlocks = {}
+            /\ confirmedBlocks[h] = NoBlock
+    /\ top /= NoHash =>
+        /\ ~ChainContainsCycles(top, {})
+        /\ \A h \in Hash :
+            LET blocksInChain == BlocksInChain(top) IN
+            /\ confirmedBlocks[h] /= NoBlock <=> h \in blocksInChain
 
 Init ==
     /\ createdBlocks = {}
     /\ confirmedBlocks = [h \in Hash |-> NoBlock]
-    /\ top = HF!NoHash
+    /\ top = NoHash
 
 Genesis(v) ==
     LET genesisBlock == [value |-> v] IN
     /\ CalcHash(genesisBlock)
-    /\ top = HF!NoHash
+    /\ top = NoHash
     /\ confirmedBlocks' =
         [confirmedBlocks EXCEPT
             ![GetHash(genesisBlock)] = genesisBlock]
     /\ top' = GetHash(genesisBlock)
+    /\ UNCHANGED createdBlocks
 
 CreateBlock(v) ==
+    /\ top /= NoHash
     /\ createdBlocks' = createdBlocks \cup {v}
     /\ UNCHANGED <<confirmedBlocks, top>>
 
 ConfirmBlock(v) ==
     LET newBlock == [previous |-> top, value |-> v] IN
+    /\ top /= NoHash
     /\ CalcHash(newBlock)
     /\ confirmedBlocks' =
         [confirmedBlocks EXCEPT
