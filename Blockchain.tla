@@ -1,11 +1,12 @@
 ----------------------------- MODULE Blockchain -----------------------------
 CONSTANTS
     Hash,
-    CalcHash(_),
-    GetHash(_),
+    CalculateHash(_,_,_),
+    HashOf(_),
     Value
 
 VARIABLES
+    lastHash,
     createdBlocks,
     confirmedBlocks,
     top
@@ -26,6 +27,7 @@ Block == GenesisBlock \cup TransactionBlock
 NoBlock == CHOOSE b : b \notin Block
 
 TypeInvariant ==
+    /\ lastHash \in Hash \cup {NoHash}
     /\ createdBlocks \subseteq Value
     /\ confirmedBlocks \in [Hash -> Block \cup {NoBlock}]
     /\ top \in Hash \cup {NoHash}
@@ -48,10 +50,6 @@ BlocksInChain(hash) ==
     ELSE {hash} \cup BlocksInChain(block.previous)
 
 SafetyInvariant ==
-    /\ top = NoHash =>
-        /\ \A h \in Hash :
-            /\ createdBlocks = {}
-            /\ confirmedBlocks[h] = NoBlock
     /\ top /= NoHash =>
         /\ ~ChainContainsCycles(top, {})
         /\ \A h \in Hash :
@@ -59,34 +57,35 @@ SafetyInvariant ==
             /\ confirmedBlocks[h] /= NoBlock <=> h \in blocksInChain
 
 Init ==
+    /\ lastHash = NoHash
     /\ createdBlocks = {}
     /\ confirmedBlocks = [h \in Hash |-> NoBlock]
     /\ top = NoHash
 
 Genesis(v) ==
     LET genesisBlock == [value |-> v] IN
-    /\ CalcHash(genesisBlock)
     /\ top = NoHash
+    /\ CalculateHash(genesisBlock, lastHash, lastHash')
     /\ confirmedBlocks' =
         [confirmedBlocks EXCEPT
-            ![GetHash(genesisBlock)] = genesisBlock]
-    /\ top' = GetHash(genesisBlock)
+            ![lastHash'] = genesisBlock]
+    /\ top' = lastHash'
     /\ UNCHANGED createdBlocks
 
 CreateBlock(v) ==
     /\ top /= NoHash
     /\ createdBlocks' = createdBlocks \cup {v}
-    /\ UNCHANGED <<confirmedBlocks, top>>
+    /\ UNCHANGED <<lastHash, confirmedBlocks, top>>
 
 ConfirmBlock(v) ==
     LET newBlock == [previous |-> top, value |-> v] IN
     /\ top /= NoHash
-    /\ CalcHash(newBlock)
+    /\ CalculateHash(newBlock, lastHash, lastHash')
     /\ confirmedBlocks' =
         [confirmedBlocks EXCEPT
-            ![GetHash(newBlock)] = newBlock]
+            ![lastHash'] = newBlock]
     /\ createdBlocks' = createdBlocks \ {v}
-    /\ top' = GetHash(newBlock)
+    /\ top' = lastHash'
 
 Next ==
     \/ \E v \in Value : Genesis(v)

@@ -5,13 +5,14 @@ EXTENDS
     Sequences
 
 CONSTANTS
-    CalcHash(_),
-    GetHash(_),
+    CalculateHash(_,_,_),
+    HashOf(_),
     MaxHashCount,
     Value
 
 VARIABLES
     hashFunction,
+    lastHash,
     createdBlocks,
     confirmedBlocks,
     top
@@ -23,18 +24,28 @@ Hash == 1 .. MaxHashCount
 UndefinedHashesExist ==
     Len(hashFunction) < MaxHashCount
 
-CalcHashImpl(block) ==
+CalculateHashImpl(block, oldLastHash, newLastHash) ==
     /\ UndefinedHashesExist
     /\ hashFunction' = Append(hashFunction, block)
+    /\ newLastHash = Len(hashFunction')
 
-GetHashImpl(block) ==
-    CHOOSE h \in DOMAIN hashFunction' : hashFunction'[h] = block
+HashOfImpl(block) ==
+    CHOOSE h \in DOMAIN hashFunction : hashFunction[h] = block
 
 BC == INSTANCE Blockchain
 
 TypeInvariant ==
     /\ hashFunction \in Seq(BC!Block)
     /\ BC!TypeInvariant
+
+ExtendedTypeInvariant ==
+    /\ \A h \in Hash :
+        LET block == confirmedBlocks[h] IN
+        /\ block /= BC!NoBlock => h = HashOf(block)
+    /\ top = BC!NoHash =>
+        /\ \A h \in Hash :
+            /\ createdBlocks = {}
+            /\ confirmedBlocks[h] = BC!NoBlock
 
 SafetyInvariant ==
     /\ BC!SafetyInvariant
