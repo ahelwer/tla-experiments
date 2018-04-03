@@ -7,13 +7,18 @@ CONSTANTS
     CalculateHash(_,_,_),
     Account,
     Node,
-    GenesisBalance
+    GenesisBalance,
+    PrivateKey
 
 VARIABLES
     lastHash,
     distributedLedger,
-    privateKey,
     received
+
+ASSUME \A block, oldLastHash, newLastHash :
+    CalculateHash(block, oldLastHash, newLastHash) \in BOOLEAN
+
+ASSUME PrivateKey \in [Node -> Account]
 
 -----------------------------------------------------------------------------
 
@@ -62,7 +67,7 @@ Block ==
     \cup ChangeRepBlock
     \cup GenesisBlock
 
-NoBlock == CHOOSE block : block \notin Block
+NoBlock == CHOOSE b : b \notin Block
 
 NoHash == CHOOSE h : h \notin Hash
 
@@ -108,7 +113,7 @@ ValueOfSendBlock(ledger, hash) ==
 TypeInvariant ==
     /\ lastHash \in Hash \cup {NoHash}
     /\ distributedLedger \in [Node -> Ledger]
-    /\ privateKey \in [Node -> Account]
+    /\ PrivateKey \in [Node -> Account]
     /\ received \in [Node -> SUBSET Block]
 
 SafetyInvariant == TRUE
@@ -145,7 +150,7 @@ CreateOpenBlock(node) ==
                 source |-> srcHash,
                 representative |-> repAccount,
                 type |-> "open",
-                signature |-> privateKey[node]]
+                signature |-> PrivateKey[node]]
             IN
             /\ distributedLedger[node][srcHash] /= NoBlock
             /\ received' =
@@ -190,7 +195,7 @@ CreateSendBlock(node) ==
                     balance |-> newBalance,
                     destination |-> dstAccount,
                     type |-> "send",
-                    signature |-> privateKey[node]]
+                    signature |-> PrivateKey[node]]
                 IN
                 /\ distributedLedger[node][prevHash] /= NoBlock
                 /\ received' =
@@ -226,7 +231,7 @@ CreateReceiveBlock(node) ==
             [previous |-> prevHash,
             source |-> srcHash,
             type |-> "receive",
-            signature |-> privateKey[node]]
+            signature |-> PrivateKey[node]]
         IN
         /\ distributedLedger[node][prevHash] /= NoBlock
         /\ distributedLedger[node][srcHash] /= NoBlock
@@ -266,7 +271,7 @@ CreateChangeRepBlock(node) ==
                 [previous |-> prevHash,
                 representative |-> newRep,
                 type |-> "change",
-                signature |-> privateKey[node]]
+                signature |-> PrivateKey[node]]
             IN
             /\ distributedLedger[node][prevHash] /= NoBlock
             /\ received' =
@@ -309,13 +314,11 @@ ProcessBlock(node) ==
 Init ==
     /\ lastHash = NoHash
     /\ distributedLedger = [n \in Node |-> [h \in Hash |-> NoBlock]]
-    /\ privateKey \in [Node -> Account]
     /\ received = [n \in Node |-> {}]
 
 Next ==
-    /\ UNCHANGED privateKey
-    /\  \/ \E account \in Account : CreateGenesisBlock(account)
-        \/ \E node \in Node : CreateBlock(node)
-        \/ \E node \in Node : ProcessBlock(node)
+    \/ \E account \in Account : CreateGenesisBlock(account)
+    \/ \E node \in Node : CreateBlock(node)
+    \/ \E node \in Node : ProcessBlock(node)
 
 =============================================================================

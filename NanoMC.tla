@@ -15,7 +15,6 @@ VARIABLES
     hashFunction,
     lastHash,
     distributedLedger,
-    privateKey,
     received
 
 -----------------------------------------------------------------------------
@@ -40,6 +39,11 @@ CalculateHashImpl(block, oldLastHash, newLastHash) ==
         /\ UndefinedHashesExist
         /\ hashFunction' = Append(hashFunction, block)
         /\ newLastHash = Len(hashFunction')
+
+PrivateKey ==
+    CHOOSE ownership \in [Node -> Account] :
+        /\ \A account \in Account :
+            /\ \E node \in Node : ownership[node] = account
 
 N == INSTANCE Nano
 
@@ -67,9 +71,8 @@ Init ==
     /\ N!Init
 
 Next ==
-    /\ UNCHANGED privateKey
-    /\  \/ \E account \in Account : CreateGenesisBlock(account)
-        \/ \E node \in Node : CreateBlock(node)
-        \/ \E node \in Node : ProcessBlock(node)
+    \/ \E account \in Account : CreateGenesisBlock(account)
+    \/ \E node \in Node : CreateBlock(node)
+    \/ \E node \in Node : ProcessBlock(node)
         
 =============================================================================
