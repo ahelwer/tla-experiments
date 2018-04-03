@@ -1,8 +1,6 @@
 -------------------------------- MODULE Nano --------------------------------
 EXTENDS
-    FiniteSets,
-    Integers,
-    Sequences
+    Naturals
 
 CONSTANTS
     Hash,
