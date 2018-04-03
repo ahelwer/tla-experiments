@@ -103,12 +103,9 @@ BlocksInChain(ledger, hash) ==  \* Gets the set of blocks in the chain
         ELSE BlocksInChain(ledger, block.previous)
 
 IsSendReceived(ledger, sourceHash) ==
-    LET sourceBlock == ledger[sourceHash] IN
-    LET recipientAccount == sourceBlock.destination IN
-    LET topHash == TopBlock(ledger, recipientAccount) IN    
-    LET blockHashes == BlocksInChain(ledger, topHash) IN
-    /\ \E blockHash \in blockHashes :
-        LET block == ledger[blockHash] IN
+    /\ \E h \in Hash :
+        LET block == ledger[h] IN
+        /\ block /= NoBlock
         /\  \/ block.type = "open"
             \/ block.type = "receive"
         /\ block.source = sourceHash
@@ -161,7 +158,7 @@ CreateGenesisBlock(genesisAccount) ==
     /\ UNCHANGED received
 
 (***************************************************************************)
-(* Creation of an open block. This action allows Byzantine behaviour with  *)
+(* Creation of an open block. This action allows Byzantine behaviour, with *)
 (* the node specifying an arbitrary block in its possession as the source  *)
 (* block. The node can also create an open block with an invalid signature *)
 (* or create an open block for an account which has already been opened.   *)
@@ -284,32 +281,62 @@ ProcessReceiveBlock(node, block) ==
             [@ EXCEPT ![lastHash'] = block]]
 
 (***************************************************************************)
-(* Creation & processing of representative change transactions.            *)
+(* Creation of a rep change block. This action allows Byzantine behaviour, *)
+(* with the node specifying an arbitrary block in its possession as the    *)
+(* previous block.                                                         *)
 (***************************************************************************)
-CreateChangeRepBlock(n, block) == TRUE
+CreateChangeRepBlock(node) ==
+    /\ \E prevHash \in Hash :
+        /\ \E newRep \in Account :
+            LET newChangeRepBlock ==
+                [previous |-> prevHash,
+                representative |-> newRep,
+                type |-> "change",
+                signature |-> privateKey[node]]
+            IN
+            /\ distributedLedger[node][prevHash] /= NoBlock
+            /\ received' =
+                [n \in Node |->
+                    received[n] \cup {newChangeRepBlock}]
+            /\ UNCHANGED <<distributedLedger, lastHash>>
 
-ProcessChangeRepBlock(n, block) == TRUE
+(***************************************************************************)
+(* A node validates a change block before confirming it. Checks include:   *)
+(*  - The node's ledger contains the referenced previous block             *)
+(*  - The block is signed by the correct account                           *)
+(***************************************************************************)
+ProcessChangeRepBlock(node, block) ==
+    LET ledger == distributedLedger[node] IN
+    /\ block.type = "change"
+    /\ ledger[block.previous] /= NoBlock
+    /\ block.signature = ledger[block.previous].signature
+    /\ CalculateHash(block, lastHash, lastHash')
+    /\ distributedLedger' =
+        [distributedLedger EXCEPT ![node] =
+            [@ EXCEPT ![lastHash'] = block]]
 
 (***************************************************************************)
 (* Top-level actions.                                                      *)
 (***************************************************************************)
-ProcessBlock(n) ==
-    /\ \E block \in received[n] :
-        /\ CASE block.type = "open" -> ProcessOpenBlock(n, block)
-            [] block.type = "send" -> ProcessSendBlock(n, block)
-            [] block.type = "receive" -> ProcessReceiveBlock(n, block)
-            [] block.type = "change" -> ProcessChangeRepBlock(n, block)
-        /\ received' = [received EXCEPT ![n] = @ \ {block}]
+CreateBlock(node) ==
+    \/ CreateOpenBlock(node)
+    \/ CreateSendBlock(node)
+    \/ CreateReceiveBlock(node)
+    \/ CreateChangeRepBlock(node)
+
+ProcessBlock(node) ==
+    /\ \E block \in received[node] :
+        /\  \/ ProcessOpenBlock(node, block)
+            \/ ProcessSendBlock(node, block)
+            \/ ProcessReceiveBlock(node, block)
+            \/ ProcessChangeRepBlock(node, block)
+        /\ received' = [received EXCEPT ![node] = @ \ {block}]
 
 Next ==
     /\ UNCHANGED privateKey
     /\  \/ \E account \in Account : CreateGenesisBlock(account)
-        \/ \E node \in Node :
-            \/ CreateOpenBlock(node)
-            \/ CreateSendBlock(node)
-            \/ CreateReceiveBlock(node)
-        \/ \E node \in Node :
-            /\ ProcessBlock(node)
+        \/ \E node \in Node : CreateBlock(node)
+        \/ \E node \in Node : ProcessBlock(node)
         
 (***************************************************************************)
 (* System initialization.                                                  *)
