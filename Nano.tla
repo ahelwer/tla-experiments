@@ -5,15 +5,18 @@ EXTENDS
     Sequences
 
 CONSTANTS
+    CalculateHash(_,_,_),
+    HashOf(_),
     Account,
     Node,
     Hash,
     GenesisBalance
 
 VARIABLES
-    DistributedLedger,
-    Received,
-    HashFunction
+    lastHash,
+    distributedLedger,
+    privateKey,
+    received
 
 -----------------------------------------------------------------------------
 
@@ -25,213 +28,296 @@ NoHash == CHOOSE h : h \notin Hash
 
 AccountBalance == 0 .. GenesisBalance
 
-OpenAccountTx == [
-    type : {"open"},
+OpenBlock == [
     account : Account,
     source : Hash,
     representative : Account,
+    type : {"open"},
     signature : Account]
 
-SendTx == [
+SendBlock == [
     previous : Hash,
     balance : AccountBalance,
     destination : Account,
     type : {"send"},
     signature : Account]
 
-ReceiveTx == [
+ReceiveBlock == [
     previous : Hash,
     source : Hash,
     type : {"receive"},
     signature : Account]
 
-ChangeRepresentativeTx == [
+ChangeRepBlock == [
     previous: Hash,
     representative : Account,
     type : {"change"},
     signature : Account]
 
-GenesisTx == [
+GenesisBlock == [
     type : {"genesis"},
     account : Account,
     balance : {GenesisBalance},
     signature : Account]
 
-Transaction ==
-    OpenAccountTx
-    \cup SendTx
-    \cup ReceiveTx
-    \cup ChangeRepresentativeTx
-    \cup GenesisTx
+Block ==
+    OpenBlock
+    \cup SendBlock
+    \cup ReceiveBlock
+    \cup ChangeRepBlock
+    \cup GenesisBlock
 
-Blockchain == Seq(Transaction)
+NoBlock == CHOOSE block : block \notin Block
 
-NoTransaction == CHOOSE tx : tx \notin Transaction
-
-Ledger == [Hash -> Transaction \cup {NoTransaction}]
+Ledger == [Hash -> Block \cup {NoBlock}]
 
 (***************************************************************************)
 (* Functions to calculate account balances and transaction values.         *)
 (***************************************************************************)
 
-Last(s) ==  \* Returns the last element in a sequence.
-    s[Len(s)]
+IsAccountOpen(ledger, account) ==   \* Determines whether account is open
+    /\ \A h \in Hash :
+        LET block == ledger[h] IN
+        /\ block /= NoBlock => block.signature /= account
+
+TopBlock(ledger, account) ==    \* Gets the account's top block in the ledger
+    CHOOSE top \in Hash :
+        LET block == ledger[top] IN
+        /\ block /= NoBlock
+        /\ block.signature = account
+        /\ \A other \in Hash :
+            LET otherBlock == ledger[other] IN
+            (otherBlock /= NoBlock /\ otherBlock.signature = account) =>
+                CASE otherBlock.type = "open" -> TRUE
+                [] otherBlock.type = "send" -> otherBlock.previous /= top
+                [] otherBlock.type = "receive" -> otherBlock.previous /= top
+                [] otherBlock.type = "change" -> otherBlock.previous /= top
+                [] otherBlock.type = "genesis" -> TRUE
+
+RECURSIVE BlocksInChain(_,_)
+BlocksInChain(ledger, hash) ==  \* Gets the set of blocks in the chain
+    LET block == ledger[hash] IN
+    {hash} \cup
+        IF block.type = "open" \/ block.type = "genesis"
+        THEN {}
+        ELSE BlocksInChain(ledger, block.previous)
+
+IsSendReceived(ledger, sourceHash) ==
+    LET sourceBlock == ledger[sourceHash] IN
+    LET recipientAccount == sourceBlock.destination IN
+    LET topHash == TopBlock(ledger, recipientAccount) IN    
+    LET blockHashes == BlocksInChain(ledger, topHash) IN
+    /\ \E blockHash \in blockHashes :
+        LET block == ledger[blockHash] IN
+        /\  \/ block.type = "open"
+            \/ block.type = "receive"
+        /\ block.source = sourceHash
 
 RECURSIVE BalanceAt(_, _)
-RECURSIVE ValueOfSendTransaction(_, _)
+RECURSIVE ValueOfSendBlock(_, _)
 
 BalanceAt(ledger, hash) ==
-    LET tx == ledger[hash] IN
-    CASE tx.type = "open" -> ValueOfSendTransaction(ledger, tx.source)
-    [] tx.type = "send" -> tx.balance
-    [] tx.type = "receive" ->
-        BalanceAt(ledger, tx.previous)
-        + ValueOfSendTransaction(ledger, tx.source)
-    [] tx.type = "genesis" -> tx.balance
+    LET block == ledger[hash] IN
+    CASE block.type = "open" -> ValueOfSendBlock(ledger, block.source)
+    [] block.type = "send" -> block.balance
+    [] block.type = "receive" ->
+        BalanceAt(ledger, block.previous)
+        + ValueOfSendBlock(ledger, block.source)
+    [] block.type = "change" -> BalanceAt(ledger, block.previous)
+    [] block.type = "genesis" -> block.balance
 
-ValueOfSendTransaction(ledger, hash) ==
-    LET tx == ledger[hash] IN
-    BalanceAt(ledger, tx.previous) - tx.balance
+ValueOfSendBlock(ledger, hash) ==
+    LET block == ledger[hash] IN
+    BalanceAt(ledger, block.previous) - block.balance
  
 (***************************************************************************)
 (* The type & safety invariants.                                           *)
 (***************************************************************************)
 TypeInvariant ==
-    /\ DistributedLedger \in [Node -> Ledger]
-    /\ Received \in [Node -> SUBSET Transaction]
-    /\ HashFunction \in [Transaction -> Hash \cup {NoHash}]
+    /\ lastHash \in Hash \cup {NoHash}
+    /\ distributedLedger \in [Node -> Ledger]
+    /\ privateKey \in [Node -> Account]
+    /\ received \in [Node -> SUBSET Block]
 
-SafetyInvariant ==
-    /\ \A tx \in Transaction :
-        /\ HashFunction[tx] /= NoHash <=>
-            /\ \E n \in Node :
-                /\ DistributedLedger[n][HashFunction[tx]] = tx
-            /\ \A n \in Node :
-                /\ DistributedLedger[n][HashFunction[tx]] \in {NoTransaction, tx}
+SafetyInvariant == TRUE
+
 
 (***************************************************************************)
-(* Creation & processing of send transactions.                             *)
+(* Creates the genesis block under the specified account.                  *)
 (***************************************************************************)
-CreateSendTx(node, srcAccount, dstAccount, newBalance) ==
-    /\ \E newHash, prevHash \in Hash :
-        LET newSendTx ==
-            [previous |-> prevHash,
-            balance |-> newBalance,
-            destination |-> dstAccount,
-            type |-> "send",
-            signature |-> srcAccount]
-        IN
-        /\  \/ HashFunction[newSendTx] = newHash
-            \/ \A tx \in Transaction : HashFunction[tx] /= newHash
-        /\ DistributedLedger[node][prevHash] /= NoTransaction
-        /\ Received' = [n \in Node |-> Received[n] \cup {newSendTx}]
-        /\ HashFunction' = [HashFunction EXCEPT ![newSendTx] = newHash]
-        /\ UNCHANGED <<DistributedLedger>>
-
-ProcessSendTransaction(n, tx) ==
-    LET txHash == HashFunction[tx] IN
-    LET ledger == DistributedLedger[n] IN
-    /\ tx.type = "send"
-    /\ ledger[tx.previous] /= NoTransaction
-    /\ tx.signature = ledger[tx.previous].signature
-    /\ tx.destination /= tx.signature
-    /\ tx.balance < BalanceAt(ledger, tx.previous)
-    /\ DistributedLedger' =
-        [DistributedLedger EXCEPT ![n] =
-            [@ EXCEPT ![txHash] = tx]]
+CreateGenesisBlock(genesisAccount) ==
+    LET genesisBlock ==
+        [type |-> "genesis",
+        account |-> genesisAccount,
+        balance |-> GenesisBalance,
+        signature |-> genesisAccount]
+    IN
+    /\ lastHash = NoHash
+    /\ CalculateHash(genesisBlock, lastHash, lastHash')
+    /\ distributedLedger' =
+        [n \in Node |->
+            [distributedLedger EXCEPT
+                ![lastHash'] = genesisBlock]]
+    /\ UNCHANGED received
 
 (***************************************************************************)
-(* Creation & processing of receive transactions.                          *)
+(* Creation of an open block. This action allows Byzantine behaviour with  *)
+(* the node specifying an arbitrary block in its possession as the source  *)
+(* block. The node can also create an open block with an invalid signature *)
+(* or create an open block for an account which has already been opened.   *)
 (***************************************************************************)
-CreateReceiveTx(node, account) ==
-    \E newHash, prevHash, srcHash \in Hash :
-        LET newRcvTx ==
+CreateOpenBlock(node) ==
+    /\ \E newAccount, repAccount \in Account :
+        /\ \E srcHash \in Hash :
+            LET newOpenBlock ==
+                [account |-> newAccount,
+                source |-> srcHash,
+                representative |-> repAccount,
+                type |-> "open",
+                signature |-> privateKey[node]]
+            IN
+            /\ distributedLedger[node][srcHash] /= NoBlock
+            /\ received' =
+                [n \in Node |->
+                    received[n] \cup {newOpenBlock}]
+            /\ UNCHANGED <<distributedLedger, lastHash>>
+
+(***************************************************************************)
+(* A node validates an open block before confirming it. Checks include:    *)
+(*  - The block is signed by the account being opened                      *)
+(*  - The account is not already open                                      *)
+(*  - The node's ledger contains the referenced source block               *)
+(*  - The source block is a send block to the account being opened         *)
+(***************************************************************************)
+ProcessOpenBlock(node, block) ==
+    LET ledger == distributedLedger[node] IN
+    /\ block.type = "open"
+    /\ block.signature = block.account
+    /\ ~IsAccountOpen(ledger, block.account)
+    /\ ledger[block.source] /= NoBlock
+    /\ ledger[block.source].type = "send"
+    /\ ledger[block.source].destination = block.account
+    /\ CalculateHash(block, lastHash, lastHash')
+    /\ distributedLedger' =
+        [distributedLedger EXCEPT ![node] =
+            [@ EXCEPT ![lastHash'] = block]]
+
+(***************************************************************************)
+(* Creation of a send block. This action allows Byzantine behaviour, with  *)
+(* the node specifying an arbitrary block in its possession as the         *)
+(* previous block. This can produce invalid transactions (which recipient  *)
+(* nodes must catch), double spends, or normal valid transactions. An      *)
+(* arbitrary amount of Nano is chosen as the value to send, which might be *)
+(* more than the amount of Nano possessed by the account.                  *)
+(***************************************************************************)
+CreateSendBlock(node) ==
+    /\ \E prevHash \in Hash :
+        /\ \E dstAccount \in Account :
+            /\ \E newBalance \in AccountBalance :
+                LET newSendBlock ==
+                    [previous |-> prevHash,
+                    balance |-> newBalance,
+                    destination |-> dstAccount,
+                    type |-> "send",
+                    signature |-> privateKey[node]]
+                IN
+                /\ distributedLedger[node][prevHash] /= NoBlock
+                /\ received' =
+                    [n \in Node |->
+                        received[n] \cup {newSendBlock}]
+                /\ UNCHANGED <<distributedLedger, lastHash>>
+
+(***************************************************************************)
+(* A node validates a send block before confirming it. Checks include:     *)
+(*  - The node's ledger contains the referenced previous block             *)
+(*  - The block is signed by the account sourcing the funds                *)
+(*  - The value sent is non-negative                                       *)
+(***************************************************************************)
+ProcessSendBlock(node, block) ==
+    LET ledger == distributedLedger[node] IN
+    /\ block.type = "send"
+    /\ ledger[block.previous] /= NoBlock
+    /\ block.signature = ledger[block.previous].signature
+    /\ block.balance <= BalanceAt(ledger, block.previous)
+    /\ CalculateHash(block, lastHash, lastHash')
+    /\ distributedLedger' =
+        [distributedLedger EXCEPT ![node] =
+            [@ EXCEPT ![lastHash'] = block]]
+
+(***************************************************************************)
+(* Creation of a receive block. This action allows Byzantine behaviour,    *)
+(* with the node specifying arbitrary blocks in its possession as the      *)
+(* previous and source blocks.                                             *)
+(***************************************************************************)
+CreateReceiveBlock(node) ==
+    \E prevHash, srcHash \in Hash :
+        LET newRcvBlock ==
             [previous |-> prevHash,
             source |-> srcHash,
             type |-> "receive",
-            signature |-> account]
+            signature |-> privateKey[node]]
         IN
-        /\  \/ HashFunction[newRcvTx] = newHash
-            \/ \A tx \in Transaction : HashFunction[tx] /= newHash
-        /\ DistributedLedger[node][prevHash] /= NoTransaction
-        /\ DistributedLedger[node][srcHash] /= NoTransaction
-        /\ Received' = [n \in Node |-> Received[n] \cup {newRcvTx}]
-        /\ HashFunction' = [HashFunction EXCEPT ![newRcvTx] = newHash]
-        /\ UNCHANGED <<DistributedLedger>>
-
-ProcessReceiveTransaction(n, tx) ==
-    LET txHash == HashFunction[tx] IN
-    LET ledger == DistributedLedger[n] IN
-    /\ tx.type = "receive"
-    /\ ledger[tx.previous] /= NoTransaction
-    /\ ledger[tx.source] /= NoTransaction
-    /\ tx.signature = ledger[tx.previous].signature
-    /\ ledger[tx.source].type = "send"
-    /\ ledger[tx.source].destination = tx.signature
-    /\ DistributedLedger' =
-        [DistributedLedger EXCEPT ![n] =
-            [@ EXCEPT ![txHash] = tx]]
+        /\ distributedLedger[node][prevHash] /= NoBlock
+        /\ distributedLedger[node][srcHash] /= NoBlock
+        /\ received' = [n \in Node |-> received[n] \cup {newRcvBlock}]
+        /\ UNCHANGED <<distributedLedger, lastHash>>
 
 (***************************************************************************)
-(* Creation & processing of account open transactions.                     *)
+(* A node validates a receive block before confirming it. Checks include:  *)
+(*  - The node's ledger contains the referenced previous & source blocks   *)
+(*  - The block is signed by the account sourcing the funds                *)
+(*  - The source block is a send block to the receive block's account      *)
+(*  - The source block does not already have a corresponding receive/open  *)
 (***************************************************************************)
-CreateOpenAccountTransaction(n, tx) == TRUE
-
-ProcessOpenAccountTransaction(n, tx) == TRUE
+ProcessReceiveBlock(node, block) ==
+    LET ledger == distributedLedger[node] IN
+    /\ block.type = "receive"
+    /\ ledger[block.previous] /= NoBlock
+    /\ ledger[block.source] /= NoBlock
+    /\ block.signature = ledger[block.previous].signature
+    /\ ledger[block.source].type = "send"
+    /\ ledger[block.source].destination = block.signature
+    /\ ~IsSendReceived(ledger, block.source)
+    /\ CalculateHash(block, lastHash, lastHash')
+    /\ distributedLedger' =
+        [distributedLedger EXCEPT ![node] =
+            [@ EXCEPT ![lastHash'] = block]]
 
 (***************************************************************************)
 (* Creation & processing of representative change transactions.            *)
 (***************************************************************************)
-CreateChangeRepresentativeTransaction(n, tx) == TRUE
+CreateChangeRepBlock(n, block) == TRUE
 
-ProcessChangeRepresentativeTransaction(n, tx) == TRUE
-
+ProcessChangeRepBlock(n, block) == TRUE
 
 (***************************************************************************)
 (* Top-level actions.                                                      *)
 (***************************************************************************)
-ProcessTransaction(n) ==
-    /\ \E tx \in Received[n] :
-        /\ CASE tx.type = "open" -> ProcessOpenAccountTransaction(n, tx)
-            [] tx.type = "send" -> ProcessSendTransaction(n, tx)
-            [] tx.type = "receive" -> ProcessReceiveTransaction(n, tx)
-            [] tx.type = "change" -> ProcessChangeRepresentativeTransaction(n, tx)
-        /\ Received' = [Received EXCEPT ![n] = @ \ {tx}]
-    /\ UNCHANGED <<HashFunction>>
+ProcessBlock(n) ==
+    /\ \E block \in received[n] :
+        /\ CASE block.type = "open" -> ProcessOpenBlock(n, block)
+            [] block.type = "send" -> ProcessSendBlock(n, block)
+            [] block.type = "receive" -> ProcessReceiveBlock(n, block)
+            [] block.type = "change" -> ProcessChangeRepBlock(n, block)
+        /\ received' = [received EXCEPT ![n] = @ \ {block}]
 
 Next ==
-    \/ \E node \in Node :
-        \/ \E srcAccount, dstAccount \in Account :
-            /\ \E newBalance \in AccountBalance :
-                /\ CreateSendTx(node, srcAccount, dstAccount, newBalance)
-        \/ \E account \in Account :
-            /\ CreateReceiveTx(node, account)
-    \/ \E n \in Node :
-        /\ ProcessTransaction(n)
-
+    /\ UNCHANGED privateKey
+    /\  \/ \E account \in Account : CreateGenesisBlock(account)
+        \/ \E node \in Node :
+            \/ CreateOpenBlock(node)
+            \/ CreateSendBlock(node)
+            \/ CreateReceiveBlock(node)
+        \/ \E node \in Node :
+            /\ ProcessBlock(node)
+        
 (***************************************************************************)
-(* System initialization. Only the genesis account is open.                *)
+(* System initialization.                                                  *)
 (***************************************************************************)
 Init ==
-    /\ \E genesisHash \in Hash :
-        /\ \E genesisAccount \in Account :
-            LET genesisBlock ==
-                [type |-> "genesis",
-                account |-> genesisAccount,
-                balance |-> GenesisBalance,
-                signature |-> genesisAccount]
-            IN
-            /\ DistributedLedger =
-                [n \in Node |->
-                    [h \in Hash |->
-                        IF h = genesisHash
-                        THEN genesisBlock
-                        ELSE NoTransaction]]
-            /\ HashFunction =
-                [tx \in Transaction |->
-                    IF tx = genesisBlock
-                    THEN genesisHash
-                    ELSE NoHash]
-    /\ Received = [n \in Node |-> {}]
+    /\ lastHash = NoHash
+    /\ distributedLedger = [n \in Node |-> [h \in Hash |-> NoBlock]]
+    /\ privateKey \in [Node -> Account]
+    /\ received = [n \in Node |-> {}]
 
 =============================================================================
