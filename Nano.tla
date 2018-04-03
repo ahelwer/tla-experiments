@@ -20,10 +20,8 @@ VARIABLES
 -----------------------------------------------------------------------------
 
 (***************************************************************************)
-(* Defines blockchains, ledgers, and the set of valid transactions.        *)
+(* Defines the set of protocol-conforming blocks.                          *)
 (***************************************************************************)
-
-NoHash == CHOOSE h : h \notin Hash
 
 AccountBalance == 0 .. GenesisBalance
 
@@ -68,38 +66,18 @@ Block ==
 
 NoBlock == CHOOSE block : block \notin Block
 
+NoHash == CHOOSE h : h \notin Hash
+
 Ledger == [Hash -> Block \cup {NoBlock}]
 
 (***************************************************************************)
-(* Functions to calculate account balances and transaction values.         *)
+(* Utility functions to calculate block lattice properties.                *)
 (***************************************************************************)
 
-IsAccountOpen(ledger, account) ==   \* Determines whether account is open
+IsAccountOpen(ledger, account) ==
     /\ \A h \in Hash :
         LET block == ledger[h] IN
         /\ block /= NoBlock => block.signature /= account
-
-TopBlock(ledger, account) ==    \* Gets the account's top block in the ledger
-    CHOOSE top \in Hash :
-        LET block == ledger[top] IN
-        /\ block /= NoBlock
-        /\ block.signature = account
-        /\ \A other \in Hash :
-            LET otherBlock == ledger[other] IN
-            (otherBlock /= NoBlock /\ otherBlock.signature = account) =>
-                CASE otherBlock.type = "open" -> TRUE
-                [] otherBlock.type = "send" -> otherBlock.previous /= top
-                [] otherBlock.type = "receive" -> otherBlock.previous /= top
-                [] otherBlock.type = "change" -> otherBlock.previous /= top
-                [] otherBlock.type = "genesis" -> TRUE
-
-RECURSIVE BlocksInChain(_,_)
-BlocksInChain(ledger, hash) ==  \* Gets the set of blocks in the chain
-    LET block == ledger[hash] IN
-    {hash} \cup
-        IF block.type = "open" \/ block.type = "genesis"
-        THEN {}
-        ELSE BlocksInChain(ledger, block.previous)
 
 IsSendReceived(ledger, sourceHash) ==
     /\ \E h \in Hash :
@@ -136,7 +114,6 @@ TypeInvariant ==
     /\ received \in [Node -> SUBSET Block]
 
 SafetyInvariant == TRUE
-
 
 (***************************************************************************)
 (* Creates the genesis block under the specified account.                  *)
