@@ -5,11 +5,10 @@ EXTENDS
     Sequences
 
 CONSTANTS
+    Hash,
     CalculateHash(_,_,_),
-    HashOf(_),
     Account,
     Node,
-    Hash,
     GenesisBalance
 
 VARIABLES
@@ -153,7 +152,7 @@ CreateGenesisBlock(genesisAccount) ==
     /\ CalculateHash(genesisBlock, lastHash, lastHash')
     /\ distributedLedger' =
         [n \in Node |->
-            [distributedLedger EXCEPT
+            [distributedLedger[n] EXCEPT
                 ![lastHash'] = genesisBlock]]
     /\ UNCHANGED received
 
@@ -332,19 +331,16 @@ ProcessBlock(node) ==
             \/ ProcessChangeRepBlock(node, block)
         /\ received' = [received EXCEPT ![node] = @ \ {block}]
 
-Next ==
-    /\ UNCHANGED privateKey
-    /\  \/ \E account \in Account : CreateGenesisBlock(account)
-        \/ \E node \in Node : CreateBlock(node)
-        \/ \E node \in Node : ProcessBlock(node)
-        
-(***************************************************************************)
-(* System initialization.                                                  *)
-(***************************************************************************)
 Init ==
     /\ lastHash = NoHash
     /\ distributedLedger = [n \in Node |-> [h \in Hash |-> NoBlock]]
     /\ privateKey \in [Node -> Account]
     /\ received = [n \in Node |-> {}]
+
+Next ==
+    /\ UNCHANGED privateKey
+    /\  \/ \E account \in Account : CreateGenesisBlock(account)
+        \/ \E node \in Node : CreateBlock(node)
+        \/ \E node \in Node : ProcessBlock(node)
 
 =============================================================================

@@ -6,8 +6,6 @@ EXTENDS
 
 CONSTANTS
     CalculateHash(_,_,_),
-    GenesisHash(_,_),
-    HashOf(_),
     Account,
     Node,
     MaxHashCount,
@@ -27,18 +25,51 @@ Hash == 1 .. MaxHashCount
 UndefinedHashesExist ==
     Len(hashFunction) < MaxHashCount
 
-CalculateHashImpl(block, oldLastHash, newLastHash) ==
-    /\ UndefinedHashesExist
-    /\ hashFunction' = Append(hashFunction, block)
-    /\ newLastHash = Len(hashFunction')
+HashIsDefined(block) ==
+    /\ \E h \in DOMAIN hashFunction : hashFunction[h] = block
 
-HashOfImpl(block) ==
+HashOf(block) ==
     CHOOSE h \in DOMAIN hashFunction : hashFunction[h] = block
 
-GenesisHashImpl(genesisBlock, genesisHash) ==
-    /\ hashFunction = <<genesisBlock>> 
-    /\ genesisHash = HashOf(genesisBlock)
+CalculateHashImpl(block, oldLastHash, newLastHash) ==
+    IF HashIsDefined(block)
+    THEN
+        /\ newLastHash = HashOf(block)
+        /\ UNCHANGED hashFunction
+    ELSE
+        /\ UndefinedHashesExist
+        /\ hashFunction' = Append(hashFunction, block)
+        /\ newLastHash = Len(hashFunction')
 
 N == INSTANCE Nano
 
+TypeInvariant ==
+    /\ hashFunction \in Seq(N!Block)
+    /\ N!TypeInvariant
+
+SafetyInvariant ==
+    /\ N!SafetyInvariant
+
+CreateGenesisBlock(genesisAccount) ==
+    /\ UndefinedHashesExist
+    /\ N!CreateGenesisBlock(genesisAccount)
+
+CreateBlock(node) ==
+    /\ N!CreateBlock(node)
+    /\ UNCHANGED hashFunction
+
+ProcessBlock(node) ==
+    /\ UndefinedHashesExist
+    /\ N!ProcessBlock(node)
+
+Init ==
+    /\ hashFunction = <<>>
+    /\ N!Init
+
+Next ==
+    /\ UNCHANGED privateKey
+    /\  \/ \E account \in Account : CreateGenesisBlock(account)
+        \/ \E node \in Node : CreateBlock(node)
+        \/ \E node \in Node : ProcessBlock(node)
+        
 =============================================================================
