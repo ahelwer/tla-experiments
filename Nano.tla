@@ -153,10 +153,11 @@ CreateOpenBlock(node) ==
                 signature |-> PrivateKey[node]]
             IN
             /\ distributedLedger[node][srcHash] /= NoBlock
+            /\ CalculateHash(newOpenBlock, lastHash, lastHash')
             /\ received' =
                 [n \in Node |->
                     received[n] \cup {newOpenBlock}]
-            /\ UNCHANGED <<distributedLedger, lastHash>>
+            /\ UNCHANGED distributedLedger
 
 (***************************************************************************)
 (* A node validates an open block before confirming it. Checks include:    *)
@@ -198,10 +199,11 @@ CreateSendBlock(node) ==
                     signature |-> PrivateKey[node]]
                 IN
                 /\ distributedLedger[node][prevHash] /= NoBlock
+                /\ CalculateHash(newSendBlock, lastHash, lastHash')
                 /\ received' =
                     [n \in Node |->
                         received[n] \cup {newSendBlock}]
-                /\ UNCHANGED <<distributedLedger, lastHash>>
+                /\ UNCHANGED distributedLedger
 
 (***************************************************************************)
 (* A node validates a send block before confirming it. Checks include:     *)
@@ -235,8 +237,9 @@ CreateReceiveBlock(node) ==
         IN
         /\ distributedLedger[node][prevHash] /= NoBlock
         /\ distributedLedger[node][srcHash] /= NoBlock
+        /\ CalculateHash(newRcvBlock, lastHash, lastHash')
         /\ received' = [n \in Node |-> received[n] \cup {newRcvBlock}]
-        /\ UNCHANGED <<distributedLedger, lastHash>>
+        /\ UNCHANGED distributedLedger
 
 (***************************************************************************)
 (* A node validates a receive block before confirming it. Checks include:  *)
@@ -274,10 +277,11 @@ CreateChangeRepBlock(node) ==
                 signature |-> PrivateKey[node]]
             IN
             /\ distributedLedger[node][prevHash] /= NoBlock
+            /\ CalculateHash(newChangeRepBlock, lastHash, lastHash')
             /\ received' =
                 [n \in Node |->
                     received[n] \cup {newChangeRepBlock}]
-            /\ UNCHANGED <<distributedLedger, lastHash>>
+            /\ UNCHANGED distributedLedger
 
 (***************************************************************************)
 (* A node validates a change block before confirming it. Checks include:   *)

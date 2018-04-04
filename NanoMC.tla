@@ -54,25 +54,19 @@ TypeInvariant ==
 SafetyInvariant ==
     /\ N!SafetyInvariant
 
-CreateGenesisBlock(genesisAccount) ==
-    /\ UndefinedHashesExist
-    /\ N!CreateGenesisBlock(genesisAccount)
-
-CreateBlock(node) ==
-    /\ N!CreateBlock(node)
-    /\ UNCHANGED hashFunction
-
-ProcessBlock(node) ==
-    /\ UndefinedHashesExist
-    /\ N!ProcessBlock(node)
-
 Init ==
     /\ hashFunction = <<>>
     /\ N!Init
 
+StutterWhenHashesDepleted ==
+    /\ UNCHANGED hashFunction
+    /\ UNCHANGED lastHash
+    /\ UNCHANGED distributedLedger
+    /\ UNCHANGED received
+
 Next ==
-    \/ \E account \in Account : CreateGenesisBlock(account)
-    \/ \E node \in Node : CreateBlock(node)
-    \/ \E node \in Node : ProcessBlock(node)
+    IF UndefinedHashesExist
+    THEN N!Next
+    ELSE StutterWhenHashesDepleted
         
 =============================================================================
