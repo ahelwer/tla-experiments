@@ -8,7 +8,8 @@ CONSTANTS
     Account,
     Node,
     GenesisBalance,
-    PrivateKey
+    PrivateKey,
+    ValidateCreatedBlocks
 
 VARIABLES
     lastHash,
@@ -19,6 +20,8 @@ ASSUME \A block, oldLastHash, newLastHash :
     CalculateHash(block, oldLastHash, newLastHash) \in BOOLEAN
 
 ASSUME PrivateKey \in [Node -> Account]
+
+ASSUME ValidateCreatedBlocks \in BOOLEAN
 
 -----------------------------------------------------------------------------
 
@@ -137,12 +140,22 @@ CreateGenesisBlock(genesisAccount) ==
     /\ UNCHANGED received
 
 (***************************************************************************)
-(* Creation of an open block. This action allows Byzantine behaviour, with *)
-(* the node specifying an arbitrary block in its possession as the source  *)
-(* block. The node can also create an open block with an invalid signature *)
-(* or create an open block for an account which has already been opened.   *)
+(* Creation, validation, and confirmation of open blocks. Checks include:  *)
+(*  - The block is signed by the private key of the account being opened   *)
+(*  - The node's ledger contains the referenced source block               *)
+(*  - The source block is a send block to the account being opened         *)
 (***************************************************************************)
+
+ValidateOpenBlock(ledger, block) ==
+    LET sourceBlock == ledger[block.source] IN
+    /\ block.type = "open"
+    /\ block.signature = block.account
+    /\ sourceBlock /= NoBlock
+    /\ sourceBlock.type = "send"
+    /\ sourceBlock.destination = block.account
+
 CreateOpenBlock(node) ==
+    LET ledger == distributedLedger[node] IN
     /\ \E newAccount, repAccount \in Account :
         /\ \E srcHash \in Hash :
             LET newOpenBlock ==
@@ -152,42 +165,38 @@ CreateOpenBlock(node) ==
                 type |-> "open",
                 signature |-> PrivateKey[node]]
             IN
-            /\ distributedLedger[node][srcHash] /= NoBlock
+            /\ ledger[srcHash] /= NoBlock
+            /\ ValidateCreatedBlocks =>
+                /\ ValidateOpenBlock(ledger, newOpenBlock)
             /\ CalculateHash(newOpenBlock, lastHash, lastHash')
             /\ received' =
                 [n \in Node |->
                     received[n] \cup {newOpenBlock}]
             /\ UNCHANGED distributedLedger
 
-(***************************************************************************)
-(* A node validates an open block before confirming it. Checks include:    *)
-(*  - The block is signed by the account being opened                      *)
-(*  - The account is not already open                                      *)
-(*  - The node's ledger contains the referenced source block               *)
-(*  - The source block is a send block to the account being opened         *)
-(***************************************************************************)
 ProcessOpenBlock(node, block) ==
     LET ledger == distributedLedger[node] IN
-    /\ block.type = "open"
-    /\ block.signature = block.account
+    /\ ValidateOpenBlock(ledger, block)
     /\ ~IsAccountOpen(ledger, block.account)
-    /\ ledger[block.source] /= NoBlock
-    /\ ledger[block.source].type = "send"
-    /\ ledger[block.source].destination = block.account
     /\ CalculateHash(block, lastHash, lastHash')
     /\ distributedLedger' =
         [distributedLedger EXCEPT ![node] =
             [@ EXCEPT ![lastHash'] = block]]
 
 (***************************************************************************)
-(* Creation of a send block. This action allows Byzantine behaviour, with  *)
-(* the node specifying an arbitrary block in its possession as the         *)
-(* previous block. This can produce invalid transactions (which recipient  *)
-(* nodes must catch), double spends, or normal valid transactions. An      *)
-(* arbitrary amount of Nano is chosen as the value to send, which might be *)
-(* more than the amount of Nano possessed by the account.                  *)
+(* Creation, validation, and confirmation of send blocks. Checks include:  *)
+(*  - The node's ledger contains the referenced previous block             *)
+(*  - The block is signed by the account sourcing the funds                *)
+(*  - The value sent is non-negative                                       *)
 (***************************************************************************)
+
+ValidateSendBlock(ledger, block) ==
+    /\ block.type = "send"
+    /\ ledger[block.previous] /= NoBlock
+    /\ ledger[block.previous].signature = block.signature
+
 CreateSendBlock(node) ==
+    LET ledger == distributedLedger[node] IN
     /\ \E prevHash \in Hash :
         /\ \E dstAccount \in Account :
             /\ \E newBalance \in AccountBalance :
@@ -198,24 +207,18 @@ CreateSendBlock(node) ==
                     type |-> "send",
                     signature |-> PrivateKey[node]]
                 IN
-                /\ distributedLedger[node][prevHash] /= NoBlock
+                /\ ledger[prevHash] /= NoBlock
+                /\ ValidateCreatedBlocks =>
+                    /\ ValidateSendBlock(ledger, newSendBlock)
                 /\ CalculateHash(newSendBlock, lastHash, lastHash')
                 /\ received' =
                     [n \in Node |->
                         received[n] \cup {newSendBlock}]
                 /\ UNCHANGED distributedLedger
 
-(***************************************************************************)
-(* A node validates a send block before confirming it. Checks include:     *)
-(*  - The node's ledger contains the referenced previous block             *)
-(*  - The block is signed by the account sourcing the funds                *)
-(*  - The value sent is non-negative                                       *)
-(***************************************************************************)
 ProcessSendBlock(node, block) ==
     LET ledger == distributedLedger[node] IN
-    /\ block.type = "send"
-    /\ ledger[block.previous] /= NoBlock
-    /\ block.signature = ledger[block.previous].signature
+    /\ ValidateSendBlock(ledger, block)
     /\ block.balance <= BalanceAt(ledger, block.previous)
     /\ CalculateHash(block, lastHash, lastHash')
     /\ distributedLedger' =
@@ -223,11 +226,23 @@ ProcessSendBlock(node, block) ==
             [@ EXCEPT ![lastHash'] = block]]
 
 (***************************************************************************)
-(* Creation of a receive block. This action allows Byzantine behaviour,    *)
-(* with the node specifying arbitrary blocks in its possession as the      *)
-(* previous and source blocks.                                             *)
+(* Creation, validation, & confirmation of receive blocks. Checks include: *)
+(*  - The node's ledger contains the referenced previous & source blocks   *)
+(*  - The block is signed by the account sourcing the funds                *)
+(*  - The source block is a send block to the receive block's account      *)
+(*  - The source block does not already have a corresponding receive/open  *)
 (***************************************************************************)
+
+ValidateReceiveBlock(ledger, block) ==
+    /\ block.type = "receive"
+    /\ ledger[block.previous] /= NoBlock
+    /\ ledger[block.previous].signature = block.signature
+    /\ ledger[block.source] /= NoBlock
+    /\ ledger[block.source].type = "send"
+    /\ ledger[block.source].destination = block.signature
+
 CreateReceiveBlock(node) ==
+    LET ledger == distributedLedger[node] IN
     \E prevHash, srcHash \in Hash :
         LET newRcvBlock ==
             [previous |-> prevHash,
@@ -235,27 +250,17 @@ CreateReceiveBlock(node) ==
             type |-> "receive",
             signature |-> PrivateKey[node]]
         IN
-        /\ distributedLedger[node][prevHash] /= NoBlock
-        /\ distributedLedger[node][srcHash] /= NoBlock
+        /\ ledger[prevHash] /= NoBlock
+        /\ ledger[srcHash] /= NoBlock
+        /\ ValidateCreatedBlocks =>
+            /\ ValidateReceiveBlock(ledger, newRcvBlock)
         /\ CalculateHash(newRcvBlock, lastHash, lastHash')
         /\ received' = [n \in Node |-> received[n] \cup {newRcvBlock}]
         /\ UNCHANGED distributedLedger
 
-(***************************************************************************)
-(* A node validates a receive block before confirming it. Checks include:  *)
-(*  - The node's ledger contains the referenced previous & source blocks   *)
-(*  - The block is signed by the account sourcing the funds                *)
-(*  - The source block is a send block to the receive block's account      *)
-(*  - The source block does not already have a corresponding receive/open  *)
-(***************************************************************************)
 ProcessReceiveBlock(node, block) ==
     LET ledger == distributedLedger[node] IN
-    /\ block.type = "receive"
-    /\ ledger[block.previous] /= NoBlock
-    /\ ledger[block.source] /= NoBlock
-    /\ block.signature = ledger[block.previous].signature
-    /\ ledger[block.source].type = "send"
-    /\ ledger[block.source].destination = block.signature
+    /\ ValidateReceiveBlock(ledger, block)
     /\ ~IsSendReceived(ledger, block.source)
     /\ CalculateHash(block, lastHash, lastHash')
     /\ distributedLedger' =
@@ -263,11 +268,18 @@ ProcessReceiveBlock(node, block) ==
             [@ EXCEPT ![lastHash'] = block]]
 
 (***************************************************************************)
-(* Creation of a rep change block. This action allows Byzantine behaviour, *)
-(* with the node specifying an arbitrary block in its possession as the    *)
-(* previous block.                                                         *)
+(* Creation, validation, & confirmation of change blocks. Checks include:  *)
+(*  - The node's ledger contains the referenced previous block             *)
+(*  - The block is signed by the correct account                           *)
 (***************************************************************************)
+
+ValidateChangeBlock(ledger, block) ==
+    /\ block.type = "change"
+    /\ ledger[block.previous] /= NoBlock
+    /\ block.signature = ledger[block.previous].signature
+
 CreateChangeRepBlock(node) ==
+    LET ledger == distributedLedger[node] IN
     /\ \E prevHash \in Hash :
         /\ \E newRep \in Account :
             LET newChangeRepBlock ==
@@ -276,23 +288,18 @@ CreateChangeRepBlock(node) ==
                 type |-> "change",
                 signature |-> PrivateKey[node]]
             IN
-            /\ distributedLedger[node][prevHash] /= NoBlock
+            /\ ledger[prevHash] /= NoBlock
+            /\ ValidateCreatedBlocks =>
+                /\ ValidateChangeBlock(ledger, newChangeRepBlock)
             /\ CalculateHash(newChangeRepBlock, lastHash, lastHash')
             /\ received' =
                 [n \in Node |->
                     received[n] \cup {newChangeRepBlock}]
             /\ UNCHANGED distributedLedger
 
-(***************************************************************************)
-(* A node validates a change block before confirming it. Checks include:   *)
-(*  - The node's ledger contains the referenced previous block             *)
-(*  - The block is signed by the correct account                           *)
-(***************************************************************************)
 ProcessChangeRepBlock(node, block) ==
     LET ledger == distributedLedger[node] IN
-    /\ block.type = "change"
-    /\ ledger[block.previous] /= NoBlock
-    /\ block.signature = ledger[block.previous].signature
+    /\ ValidateChangeBlock(ledger, block)
     /\ CalculateHash(block, lastHash, lastHash')
     /\ distributedLedger' =
         [distributedLedger EXCEPT ![node] =

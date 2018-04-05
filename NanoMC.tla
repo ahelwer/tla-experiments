@@ -9,7 +9,8 @@ CONSTANTS
     Account,
     Node,
     MaxHashCount,
-    GenesisBalance
+    GenesisBalance,
+    ValidateCreatedBlocks
 
 VARIABLES
     hashFunction,
