@@ -3,11 +3,12 @@ EXTENDS
     Naturals
 
 CONSTANTS
-    Hash,
-    CalculateHash(_,_,_),
-    Account,
-    Node,
-    GenesisBalance,
+    Hash,                   \* The set of all 256-bit Blake2b block hashes
+    CalculateHash(_,_,_),   \* An action calculating the hash of a block
+    Account,                \* The set of all 256-bit Ed25519 public key
+                            \* accounts in the network
+    Node,                   \* The set of all nodes in the network
+    GenesisBalance,         \* The total number of coins in the network
     PrivateKey,
     ValidateCreatedBlocks
 
@@ -30,6 +31,19 @@ ASSUME ValidateCreatedBlocks \in BOOLEAN
 (***************************************************************************)
 
 AccountBalance == 0 .. GenesisBalance
+
+BlockType ==
+    {"genesis",
+    "open",
+    "send",
+    "receive",
+    "change"}
+
+GenesisBlock == [
+    type : {"genesis"},
+    account : Account,
+    balance : {GenesisBalance},
+    signature : Account]
 
 OpenBlock == [
     account : Account,
@@ -57,24 +71,41 @@ ChangeRepBlock == [
     type : {"change"},
     signature : Account]
 
-GenesisBlock == [
-    type : {"genesis"},
-    account : Account,
-    balance : {GenesisBalance},
-    signature : Account]
-
 Block ==
-    OpenBlock
+    GenesisBlock
+    \cup OpenBlock
     \cup SendBlock
     \cup ReceiveBlock
     \cup ChangeRepBlock
-    \cup GenesisBlock
 
 NoBlock == CHOOSE b : b \notin Block
 
 NoHash == CHOOSE h : h \notin Hash
 
 Ledger == [Hash -> Block \cup {NoBlock}]
+
+MessageType ==
+    {"Publish",
+    "ConfirmReq",
+    "ConfirmAck"}
+
+MessageHeader ==
+    [type : MessageType,
+    blockType : BlockType]
+
+PublishMessage ==
+    [header : MessageHeader,
+    block : Block]
+
+ConfirmReqMessage ==
+    [header : MessageHeader,
+    block : Block]
+
+ConfirmAckMessage ==
+    [header : MessageHeader,
+    account : Account,
+    sequence : Nat,
+    block : Block]
 
 (***************************************************************************)
 (* Utility functions to calculate block lattice properties.                *)

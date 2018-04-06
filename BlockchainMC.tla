@@ -2,12 +2,15 @@
 
 EXTENDS
     Naturals,
-    Sequences
+    Sequences,
+    FiniteSets
 
 CONSTANTS
     CalculateHash(_,_,_),
-    HashOf(_),
     MaxHashCount,
+    PrivateKey,
+    PublicKey,
+    Node,
     Value
 
 VARIABLES
@@ -17,6 +20,10 @@ VARIABLES
     confirmedBlocks,
     top
 
+ASSUME
+    /\ Cardinality(PrivateKey) = Cardinality(PublicKey)
+    /\ Cardinality(PublicKey) <= Cardinality(Node)
+
 -----------------------------------------------------------------------------
 
 Hash == 1 .. MaxHashCount
@@ -24,13 +31,50 @@ Hash == 1 .. MaxHashCount
 UndefinedHashesExist ==
     Len(hashFunction) < MaxHashCount
 
-CalculateHashImpl(block, oldLastHash, newLastHash) ==
-    /\ UndefinedHashesExist
-    /\ hashFunction' = Append(hashFunction, block)
-    /\ newLastHash = Len(hashFunction')
+HashIsDefined(block) ==
+    /\ \E h \in DOMAIN hashFunction : hashFunction[h] = block
 
-HashOfImpl(block) ==
+HashOf(block) ==
     CHOOSE h \in DOMAIN hashFunction : hashFunction[h] = block
+
+CalculateHashImpl(block, oldLastHash, newLastHash) ==
+    IF HashIsDefined(block)
+    THEN
+        /\ newLastHash = HashOf(block)
+        /\ UNCHANGED hashFunction
+    ELSE
+        /\ UndefinedHashesExist
+        /\ hashFunction' = Append(hashFunction, block)
+        /\ newLastHash = Len(hashFunction')
+
+KeyPair ==
+    [private : PrivateKey,
+    public : PublicKey]
+
+RECURSIVE AssociateKeyPairs(_,_)
+AssociateKeyPairs(privateKeys, publicKeys) ==
+    IF
+        \/ privateKeys = {}
+        \/ publicKeys = {}
+    THEN {}
+    ELSE
+        LET pair ==
+            [private |-> CHOOSE k \in privateKeys : TRUE,
+            public |-> CHOOSE k \in publicKeys : TRUE]
+        IN
+        {pair} \cup
+            AssociateKeyPairs(
+                privateKeys \ {pair.private},
+                publicKeys \ {pair.public})
+
+AccountKeyPair ==
+    AssociateKeyPairs(PrivateKey, PublicKey)
+
+Ownership ==
+    CHOOSE mapping \in [Node -> AccountKeyPair] :
+        /\ \A pair \in AccountKeyPair :
+            /\ \E node \in Node :
+                /\ mapping[node] = pair
 
 BC == INSTANCE Blockchain
 
@@ -38,37 +82,32 @@ TypeInvariant ==
     /\ hashFunction \in Seq(BC!Block)
     /\ BC!TypeInvariant
 
-ExtendedTypeInvariant ==
-    /\ \A h \in Hash :
-        LET block == confirmedBlocks[h] IN
-        /\ block /= BC!NoBlock => h = HashOf(block)
-    /\ top = BC!NoHash =>
-        /\ \A h \in Hash :
-            /\ createdBlocks = {}
-            /\ confirmedBlocks[h] = BC!NoBlock
-
 SafetyInvariant ==
+    /\ \A hash \in Hash :
+        LET signedBlock == confirmedBlocks[hash] IN
+        /\ signedBlock /= BC!NoBlock =>
+            LET blockHash == HashOf(signedBlock.block) IN
+            /\ blockHash = hash
+            /\ BC!ValidateSignature(
+                signedBlock.signature,
+                signedBlock.signer,
+                blockHash)
     /\ BC!SafetyInvariant
 
 Init ==
     /\ hashFunction = <<>>
     /\ BC!Init
 
-Genesis(v) ==
-    /\ UndefinedHashesExist
-    /\ BC!Genesis(v)
-
-CreateBlock(v) ==
-    /\ BC!CreateBlock(v)
+StutterWhenHashesDepleted ==
     /\ UNCHANGED hashFunction
-
-ConfirmBlock(v) ==
-    /\ UndefinedHashesExist
-    /\ BC!ConfirmBlock(v)
+    /\ UNCHANGED lastHash
+    /\ UNCHANGED createdBlocks
+    /\ UNCHANGED confirmedBlocks
+    /\ UNCHANGED top
 
 Next ==
-    \/ \E v \in Value : Genesis(v)
-    \/ \E v \in Value : CreateBlock(v)
-    \/ \E v \in createdBlocks : ConfirmBlock(v)
+    IF UndefinedHashesExist
+    THEN BC!Next
+    ELSE StutterWhenHashesDepleted
 
 =============================================================================

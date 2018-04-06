@@ -2,7 +2,11 @@
 CONSTANTS
     Hash,
     CalculateHash(_,_,_),
-    HashOf(_),
+    PrivateKey,
+    PublicKey,
+    AccountKeyPair,
+    Node,
+    Ownership,
     Value
 
 VARIABLES
@@ -11,30 +15,64 @@ VARIABLES
     confirmedBlocks,
     top
 
+ASSUME
+    /\ \A block, oldHash, newHash :
+        /\ CalculateHash(block, oldHash, newHash) \in BOOLEAN
+    /\ AccountKeyPair \in [private : PrivateKey, public : PublicKey]
+    /\ Ownership \in [Node -> AccountKeyPair]
+
 -----------------------------------------------------------------------------
+
+(***************************************************************************)
+(* Defines the set of valid blocks.                                        *)
+(***************************************************************************)
+
+GenesisBlock ==
+    [value      : Value]
+
+TransactionBlock ==
+    [previous   : Hash,
+    value       : Value]
+
+Block ==
+    GenesisBlock
+    \cup TransactionBlock
+
+Signature ==
+    [data       : Hash,
+    signedWith  : PrivateKey]
+
+SignedBlock ==
+    [block      : Block,
+    signature   : Signature,
+    signer      : PublicKey]
+
+NoBlock == CHOOSE b : b \notin SignedBlock
 
 NoHash == CHOOSE h : h \notin Hash
 
-GenesisBlock ==
-    [value : Value]
+SignHash(hash, privateKey) ==
+    [data |-> hash,
+    signedWith |-> privateKey]
 
-TransactionBlock ==
-    [previous : Hash,
-    value : Value]
-
-Block == GenesisBlock \cup TransactionBlock
-
-NoBlock == CHOOSE b : b \notin Block
+ValidateSignature(signature, publicKey, expectedHash) ==
+    LET keyPair ==
+        CHOOSE pair \in AccountKeyPair :
+            /\ pair.public = publicKey
+    IN
+    /\ signature.signedWith = keyPair.private
+    /\ signature.data = expectedHash
 
 TypeInvariant ==
     /\ lastHash \in Hash \cup {NoHash}
-    /\ createdBlocks \subseteq Value
-    /\ confirmedBlocks \in [Hash -> Block \cup {NoBlock}]
+    /\ createdBlocks \subseteq SignedBlock
+    /\ confirmedBlocks \in [Hash -> SignedBlock \cup {NoBlock}]
     /\ top \in Hash \cup {NoHash}
 
 RECURSIVE ChainContainsCycles(_,_)
 ChainContainsCycles(hash, discovered) ==
-    LET block == confirmedBlocks[hash] IN
+    LET signedBlock == confirmedBlocks[hash] IN
+    LET block == signedBlock.block IN
     IF hash \in discovered
     THEN TRUE
     ELSE
@@ -44,17 +82,19 @@ ChainContainsCycles(hash, discovered) ==
 
 RECURSIVE BlocksInChain(_)
 BlocksInChain(hash) ==
-    LET block == confirmedBlocks[hash] IN
+    LET signedBlock == confirmedBlocks[hash] IN
+    LET block == signedBlock.block IN
     IF block \in GenesisBlock
     THEN {hash}
     ELSE {hash} \cup BlocksInChain(block.previous)
 
 SafetyInvariant ==
     /\ top /= NoHash =>
+        LET blocksInChain == BlocksInChain(top) IN
         /\ ~ChainContainsCycles(top, {})
-        /\ \A h \in Hash :
-            LET blocksInChain == BlocksInChain(top) IN
-            /\ confirmedBlocks[h] /= NoBlock <=> h \in blocksInChain
+        /\ \A hash \in Hash :
+            /\ confirmedBlocks[hash] /= NoBlock =>
+                /\ hash \in blocksInChain
 
 Init ==
     /\ lastHash = NoHash
@@ -62,34 +102,49 @@ Init ==
     /\ confirmedBlocks = [h \in Hash |-> NoBlock]
     /\ top = NoHash
 
-Genesis(v) ==
-    LET genesisBlock == [value |-> v] IN
+Genesis(node, genesisValue) ==
+    LET genesisBlock == [value |-> genesisValue] IN
+    LET keyPair == Ownership[node] IN
     /\ top = NoHash
     /\ CalculateHash(genesisBlock, lastHash, lastHash')
     /\ confirmedBlocks' =
         [confirmedBlocks EXCEPT
-            ![lastHash'] = genesisBlock]
+            ![lastHash'] =
+                [block      |-> genesisBlock,
+                signature   |-> SignHash(lastHash', keyPair.private),
+                signer      |-> keyPair.public]]
     /\ top' = lastHash'
     /\ UNCHANGED createdBlocks
 
-CreateBlock(v) ==
-    /\ top /= NoHash
-    /\ createdBlocks' = createdBlocks \cup {v}
-    /\ UNCHANGED <<lastHash, confirmedBlocks, top>>
-
-ConfirmBlock(v) ==
-    LET newBlock == [previous |-> top, value |-> v] IN
+CreateBlock(node, blockValue) ==
+    LET newBlock == [previous |-> top, value |-> blockValue] IN
+    LET keyPair == Ownership[node] IN
     /\ top /= NoHash
     /\ CalculateHash(newBlock, lastHash, lastHash')
+    /\ createdBlocks' =
+        createdBlocks \cup
+            {[block     |-> newBlock,
+            signature   |-> SignHash(lastHash', keyPair.private),
+            signer      |-> keyPair.public]}
+    /\ UNCHANGED <<confirmedBlocks, top>>
+
+ConfirmBlock(signedBlock) ==
+    LET block == signedBlock.block IN
+    /\ block.previous = top
+    /\ CalculateHash(block, lastHash, lastHash')
+    /\ ValidateSignature(
+        signedBlock.signature,
+        signedBlock.signer,
+        lastHash')
     /\ confirmedBlocks' =
         [confirmedBlocks EXCEPT
-            ![lastHash'] = newBlock]
-    /\ createdBlocks' = createdBlocks \ {v}
+            ![lastHash'] = signedBlock]
     /\ top' = lastHash'
+    /\ createdBlocks' = {}
 
 Next ==
-    \/ \E v \in Value : Genesis(v)
-    \/ \E v \in Value : CreateBlock(v)
-    \/ \E v \in createdBlocks : ConfirmBlock(v)
+    \/ \E n \in Node : \E v \in Value : Genesis(n, v)
+    \/ \E n \in Node : \E v \in Value : CreateBlock(n, v)
+    \/ \E b \in createdBlocks : ConfirmBlock(b)
 
 =============================================================================
