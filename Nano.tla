@@ -1,6 +1,7 @@
 -------------------------------- MODULE Nano --------------------------------
 EXTENDS
-    Naturals
+    Naturals,
+    Bags
 
 CONSTANTS
     Hash,                   \* The set of all 256-bit Blake2b block hashes
@@ -13,9 +14,9 @@ CONSTANTS
     Ownership               \* The private key owned by each node
 
 VARIABLES
-    lastHash,
-    distributedLedger,
-    received
+    lastHash,               \* The last calculated block hash
+    distributedLedger,      \* The distributed ledger of confirmed blocks
+    received                \* The blocks received but not yet validated
 
 ASSUME
     /\ \A data, oldHash, newHash :
@@ -39,30 +40,30 @@ BlockType ==
     "receive",
     "change"}
 
-GenesisBlock == [
-    type        : {"genesis"},
+GenesisBlock ==
+    [type       : {"genesis"},
     account     : PublicKey,
     balance     : {GenesisBalance}]
 
-OpenBlock == [
-    account     : PublicKey,
+OpenBlock ==
+    [account    : PublicKey,
     source      : Hash,
     rep         : PublicKey,
     type        : {"open"}]
 
-SendBlock == [
-    previous    : Hash,
+SendBlock ==
+    [previous   : Hash,
     balance     : AccountBalance,
     destination : PublicKey,
     type        : {"send"}]
 
-ReceiveBlock == [
-    previous    : Hash,
+ReceiveBlock ==
+    [previous   : Hash,
     source      : Hash,
     type        : {"receive"}]
 
-ChangeRepBlock == [
-    previous    : Hash,
+ChangeRepBlock ==
+    [previous   : Hash,
     rep         : PublicKey,
     type        : {"change"}]
 
@@ -105,28 +106,28 @@ ValidateSignature(signature, expectedPublicKey, expectedHash) ==
 (* Utility functions to calculate block lattice properties.                *)
 (***************************************************************************)
 
+GenesisBlockExists ==
+    /\ lastHash /= NoHash
+
 IsAccountOpen(ledger, publicKey) ==
     /\ \E hash \in Hash :
         LET signedBlock == ledger[hash] IN
         /\ signedBlock /= NoBlock
-        /\ signedBlock.block.type = "open"
+        /\ signedBlock.block.type \in {"genesis", "open"}
         /\ signedBlock.block.account = publicKey
 
 IsSendReceived(ledger, sourceHash) ==
     /\ \E hash \in Hash :
         LET signedBlock == ledger[hash] IN
         /\ signedBlock /= NoBlock
-        /\  \/ signedBlock.block.type = "open"
-            \/ signedBlock.block.type = "receive"
+        /\ signedBlock.block.type \in {"open", "receive"}
         /\ signedBlock.block.source = sourceHash
 
 RECURSIVE PublicKeyOf(_,_)
 PublicKeyOf(ledger, blockHash) ==
     LET signedBlock == ledger[blockHash] IN
     LET block == signedBlock.block IN
-    IF
-        \/ block.type = "open"
-        \/ block.type = "genesis"
+    IF block.type \in {"genesis", "open"}
     THEN block.account
     ELSE PublicKeyOf(ledger, block.previous)
 
@@ -135,7 +136,7 @@ TopBlock(ledger, publicKey) ==
         LET signedBlock == ledger[hash] IN
         /\ signedBlock /= NoBlock
         /\ PublicKeyOf(ledger, hash) = publicKey
-        /\ ~\E otherHash \in Hash \ {hash} :
+        /\ ~\E otherHash \in Hash :
             LET otherSignedBlock == ledger[otherHash] IN
             /\ otherSignedBlock /= NoBlock
             /\ otherSignedBlock.block.type \in {"send", "receive", "change"}
@@ -181,13 +182,14 @@ CryptographicInvariant ==
                     publicKey,
                     hash)
 
-RECURSIVE Sum(_)
-Sum(S) ==
+RECURSIVE SumBag(_)
+SumBag(B) ==
+    LET S == BagToSet(B) IN
     IF S = {}
     THEN 0
     ELSE
         LET e == CHOOSE x \in S : TRUE IN
-        e + Sum(S \ {e})
+        e + SumBag(B (-) SetToBag({e}))
 
 BalanceInvariant ==
     /\ \A node \in Node :
@@ -198,14 +200,15 @@ BalanceInvariant ==
         LET topBlocks ==
             {TopBlock(ledger, account) : account \in openAccounts}
         IN
-        LET balances ==
-            {BalanceAt(ledger, block) : block \in topBlocks}
+        LET accountBalances ==
+            LET ledgerBalanceAt(hash) == BalanceAt(ledger, hash) IN
+            BagOfAll(ledgerBalanceAt, SetToBag(topBlocks))
         IN
-        /\ Sum(balances) <= GenesisBalance
+        /\ GenesisBlockExists =>
+            /\ SumBag(accountBalances) <= GenesisBalance
 
 SafetyInvariant ==
     /\ CryptographicInvariant
-    /\ BalanceInvariant
 
 (***************************************************************************)
 (* Creates the genesis block.                                              *)
@@ -217,7 +220,7 @@ CreateGenesisBlock(privateKey) ==
         account |-> publicKey,
         balance |-> GenesisBalance]
     IN
-    /\ lastHash = NoHash
+    /\ ~GenesisBlockExists
     /\ CalculateHash(genesisBlock, lastHash, lastHash')
     /\ distributedLedger' =
         LET signedGenesisBlock ==
