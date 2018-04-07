@@ -5,12 +5,12 @@ EXTENDS
 CONSTANTS
     Hash,                   \* The set of all 256-bit Blake2b block hashes
     CalculateHash(_,_,_),   \* An action calculating the hash of a block
-    PrivateKey,
-    PublicKey,
-    KeyPair,
+    PrivateKey,             \* The set of all Ed25519 private keys
+    PublicKey,              \* The set of all Ed25519 public keys
+    KeyPair,                \* The public key paired with each private key
     Node,                   \* The set of all nodes in the network
     GenesisBalance,         \* The total number of coins in the network
-    Ownership
+    Ownership               \* The private key owned by each node
 
 VARIABLES
     lastHash,
@@ -18,6 +18,8 @@ VARIABLES
     received
 
 ASSUME
+    /\ \A data, oldHash, newHash :
+        /\ CalculateHash(data, oldHash, newHash) \in BOOLEAN
     /\ KeyPair \subseteq [private : PrivateKey, public : PublicKey]
     /\ KeyPair \in [PrivateKey -> PublicKey]
     /\ Ownership \in [Node -> KeyPair]
@@ -128,11 +130,23 @@ PublicKeyOf(ledger, blockHash) ==
     THEN block.account
     ELSE PublicKeyOf(ledger, block.previous)
 
+TopBlock(ledger, publicKey) ==
+    CHOOSE hash \in Hash :
+        LET signedBlock == ledger[hash] IN
+        /\ signedBlock /= NoBlock
+        /\ PublicKeyOf(ledger, hash) = publicKey
+        /\ ~\E otherHash \in Hash \ {hash} :
+            LET otherSignedBlock == ledger[otherHash] IN
+            /\ otherSignedBlock /= NoBlock
+            /\ otherSignedBlock.block.type \in {"send", "receive", "change"}
+            /\ otherSignedBlock.block.previous = hash
+
 RECURSIVE BalanceAt(_, _)
 RECURSIVE ValueOfSendBlock(_, _)
 
 BalanceAt(ledger, hash) ==
-    LET block == ledger[hash] IN
+    LET signedBlock == ledger[hash] IN
+    LET block == signedBlock.block IN
     CASE block.type = "open" -> ValueOfSendBlock(ledger, block.source)
     [] block.type = "send" -> block.balance
     [] block.type = "receive" ->
@@ -142,7 +156,8 @@ BalanceAt(ledger, hash) ==
     [] block.type = "genesis" -> block.balance
 
 ValueOfSendBlock(ledger, hash) ==
-    LET block == ledger[hash] IN
+    LET signedBlock == ledger[hash] IN
+    LET block == signedBlock.block IN
     BalanceAt(ledger, block.previous) - block.balance
  
 (***************************************************************************)
@@ -152,7 +167,6 @@ ValueOfSendBlock(ledger, hash) ==
 TypeInvariant ==
     /\ lastHash \in Hash \cup {NoHash}
     /\ distributedLedger \in [Node -> Ledger]
-    /\ Ownership \in [Node -> KeyPair]
     /\ received \in [Node -> SUBSET SignedBlock]
 
 CryptographicInvariant ==
@@ -167,7 +181,31 @@ CryptographicInvariant ==
                     publicKey,
                     hash)
 
-SafetyInvariant == TRUE
+RECURSIVE Sum(_)
+Sum(S) ==
+    IF S = {}
+    THEN 0
+    ELSE
+        LET e == CHOOSE x \in S : TRUE IN
+        e + Sum(S \ {e})
+
+BalanceInvariant ==
+    /\ \A node \in Node :
+        LET ledger == distributedLedger[node] IN
+        LET openAccounts ==
+            {account \in PublicKey : IsAccountOpen(ledger, account)}
+        IN
+        LET topBlocks ==
+            {TopBlock(ledger, account) : account \in openAccounts}
+        IN
+        LET balances ==
+            {BalanceAt(ledger, block) : block \in topBlocks}
+        IN
+        /\ Sum(balances) <= GenesisBalance
+
+SafetyInvariant ==
+    /\ CryptographicInvariant
+    /\ BalanceInvariant
 
 (***************************************************************************)
 (* Creates the genesis block.                                              *)
@@ -275,7 +313,7 @@ CreateSendBlock(node) ==
                         signature   |-> SignHash(lastHash', privateKey)]
                     IN
                     [n \in Node |->
-                        received[n] \cup {newSendBlock}]
+                        received[n] \cup {signedSendBlock}]
                 /\ UNCHANGED distributedLedger
 
 ProcessSendBlock(node, signedBlock) ==
@@ -304,8 +342,9 @@ ValidateReceiveBlock(ledger, block) ==
     /\ block.type = "receive"
     /\ ledger[block.previous] /= NoBlock
     /\ ledger[block.source] /= NoBlock
-    /\ ledger[block.source].type = "send"
-    /\ ledger[block.source].destination = PublicKeyOf(ledger, block.previous)
+    /\ ledger[block.source].block.type = "send"
+    /\ ledger[block.source].block.destination =
+        PublicKeyOf(ledger, block.previous)
 
 CreateReceiveBlock(node) ==
     LET privateKey == Ownership[node] IN
@@ -416,7 +455,7 @@ Init ==
     /\ received = [n \in Node |-> {}]
 
 Next ==
-    \/ \E account \in PublicKey : CreateGenesisBlock(account)
+    \/ \E account \in PrivateKey : CreateGenesisBlock(account)
     \/ \E node \in Node : CreateBlock(node)
     \/ \E node \in Node : ProcessBlock(node)
 

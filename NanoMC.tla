@@ -59,9 +59,6 @@ TypeInvariant ==
     /\ hashFunction \in Seq(N!Block)
     /\ N!TypeInvariant
 
-CryptographicInvariant ==
-    /\ N!CryptographicInvariant
-
 SafetyInvariant ==
     /\ N!SafetyInvariant
 
