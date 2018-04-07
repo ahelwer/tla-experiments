@@ -4,7 +4,7 @@ CONSTANTS
     CalculateHash(_,_,_),
     PrivateKey,
     PublicKey,
-    AccountKeyPair,
+    KeyPair,
     Node,
     Ownership,
     Value
@@ -18,8 +18,8 @@ VARIABLES
 ASSUME
     /\ \A block, oldHash, newHash :
         /\ CalculateHash(block, oldHash, newHash) \in BOOLEAN
-    /\ AccountKeyPair \in [private : PrivateKey, public : PublicKey]
-    /\ Ownership \in [Node -> AccountKeyPair]
+    /\ KeyPair \in [PrivateKey -> PublicKey]
+    /\ Ownership \in [Node -> PrivateKey]
 
 -----------------------------------------------------------------------------
 
@@ -55,12 +55,9 @@ SignHash(hash, privateKey) ==
     [data |-> hash,
     signedWith |-> privateKey]
 
-ValidateSignature(signature, publicKey, expectedHash) ==
-    LET keyPair ==
-        CHOOSE pair \in AccountKeyPair :
-            /\ pair.public = publicKey
-    IN
-    /\ signature.signedWith = keyPair.private
+ValidateSignature(signature, expectedPublicKey, expectedHash) ==
+    LET publicKey == KeyPair[signature.signedWith] IN
+    /\ publicKey = expectedPublicKey
     /\ signature.data = expectedHash
 
 TypeInvariant ==
@@ -104,28 +101,30 @@ Init ==
 
 Genesis(node, genesisValue) ==
     LET genesisBlock == [value |-> genesisValue] IN
-    LET keyPair == Ownership[node] IN
+    LET privateKey == Ownership[node] IN
+    LET publicKey == KeyPair[privateKey] IN
     /\ top = NoHash
     /\ CalculateHash(genesisBlock, lastHash, lastHash')
     /\ confirmedBlocks' =
         [confirmedBlocks EXCEPT
             ![lastHash'] =
                 [block      |-> genesisBlock,
-                signature   |-> SignHash(lastHash', keyPair.private),
-                signer      |-> keyPair.public]]
+                signature   |-> SignHash(lastHash', privateKey),
+                signer      |-> publicKey]]
     /\ top' = lastHash'
     /\ UNCHANGED createdBlocks
 
 CreateBlock(node, blockValue) ==
     LET newBlock == [previous |-> top, value |-> blockValue] IN
-    LET keyPair == Ownership[node] IN
+    LET privateKey == Ownership[node] IN
+    LET publicKey == KeyPair[privateKey] IN
     /\ top /= NoHash
     /\ CalculateHash(newBlock, lastHash, lastHash')
     /\ createdBlocks' =
         createdBlocks \cup
             {[block     |-> newBlock,
-            signature   |-> SignHash(lastHash', keyPair.private),
-            signer      |-> keyPair.public]}
+            signature   |-> SignHash(lastHash', privateKey),
+            signer      |-> publicKey]}
     /\ UNCHANGED <<confirmedBlocks, top>>
 
 ConfirmBlock(signedBlock) ==

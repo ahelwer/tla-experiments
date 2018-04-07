@@ -6,11 +6,11 @@ EXTENDS
 
 CONSTANTS
     CalculateHash(_,_,_),
-    Account,
-    Node,
     MaxHashCount,
-    GenesisBalance,
-    ValidateCreatedBlocks
+    PrivateKey,
+    PublicKey,
+    Node,
+    GenesisBalance
 
 VARIABLES
     hashFunction,
@@ -41,16 +41,26 @@ CalculateHashImpl(block, oldLastHash, newLastHash) ==
         /\ hashFunction' = Append(hashFunction, block)
         /\ newLastHash = Len(hashFunction')
 
-PrivateKey ==
-    CHOOSE ownership \in [Node -> Account] :
-        /\ \A account \in Account :
-            /\ \E node \in Node : ownership[node] = account
+KeyPair ==
+    CHOOSE mapping \in [PrivateKey -> PublicKey] :
+        /\ \A publicKey \in PublicKey :
+            /\ \E privateKey \in PrivateKey :
+                /\ mapping[privateKey] = publicKey
+
+Ownership ==
+    CHOOSE mapping \in [Node -> PrivateKey] :
+        /\ \A privateKey \in PrivateKey :
+            /\ \E node \in Node :
+                /\ mapping[node] = privateKey
 
 N == INSTANCE Nano
 
 TypeInvariant ==
     /\ hashFunction \in Seq(N!Block)
     /\ N!TypeInvariant
+
+CryptographicInvariant ==
+    /\ N!CryptographicInvariant
 
 SafetyInvariant ==
     /\ N!SafetyInvariant

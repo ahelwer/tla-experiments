@@ -48,33 +48,16 @@ CalculateHashImpl(block, oldLastHash, newLastHash) ==
         /\ newLastHash = Len(hashFunction')
 
 KeyPair ==
-    [private : PrivateKey,
-    public : PublicKey]
-
-RECURSIVE AssociateKeyPairs(_,_)
-AssociateKeyPairs(privateKeys, publicKeys) ==
-    IF
-        \/ privateKeys = {}
-        \/ publicKeys = {}
-    THEN {}
-    ELSE
-        LET pair ==
-            [private |-> CHOOSE k \in privateKeys : TRUE,
-            public |-> CHOOSE k \in publicKeys : TRUE]
-        IN
-        {pair} \cup
-            AssociateKeyPairs(
-                privateKeys \ {pair.private},
-                publicKeys \ {pair.public})
-
-AccountKeyPair ==
-    AssociateKeyPairs(PrivateKey, PublicKey)
+    CHOOSE mapping \in [PrivateKey -> PublicKey] :
+        /\ \A publicKey \in PublicKey :
+            /\ \E privateKey \in PrivateKey :
+                /\ mapping[privateKey] = publicKey
 
 Ownership ==
-    CHOOSE mapping \in [Node -> AccountKeyPair] :
-        /\ \A pair \in AccountKeyPair :
+    CHOOSE mapping \in [Node -> PrivateKey] :
+        /\ \A privateKey \in PrivateKey :
             /\ \E node \in Node :
-                /\ mapping[node] = pair
+                /\ mapping[node] = privateKey
 
 BC == INSTANCE Blockchain
 
