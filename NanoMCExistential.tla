@@ -63,6 +63,8 @@ StutterWhenHashesDepleted ==
     /\ UNCHANGED received
 
 Next ==
-    N!Next
+    IF \A hash \in Hash : hashFunction[hash] /= N!NoBlock
+    THEN StutterWhenHashesDepleted
+    ELSE N!Next
 
 =============================================================================
