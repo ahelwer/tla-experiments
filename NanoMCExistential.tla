@@ -35,26 +35,25 @@ Ownership ==
 N == INSTANCE Nano
 
 CalculateHashImpl(block, oldLastHash, newLastHash) ==
-    IF hashFunction[block] /= N!NoHash
+    IF \E hash \in Hash : hashFunction[hash] = block
     THEN
-        /\ newLastHash = hashFunction[block]
+        /\ newLastHash = CHOOSE hash \in Hash : hashFunction[hash] = block
         /\ UNCHANGED hashFunction
     ELSE
         /\ \E hash \in Hash :
-            /\ \A otherBlock \in N!Block :
-                /\ hashFunction[otherBlock] /= hash
-            /\ hashFunction' = [hashFunction EXCEPT ![block] = hash]
+            /\ hashFunction[hash] = N!NoBlock
+            /\ hashFunction' = [hashFunction EXCEPT ![hash] = block]
             /\ newLastHash = hash
 
 TypeInvariant ==
-    /\ hashFunction \in [N!Block -> Hash \cup {N!NoHash}]
+    /\ hashFunction \in [Hash -> N!Block \cup {N!NoBlock}]
     /\ N!TypeInvariant
 
 SafetyInvariant ==
     /\ N!SafetyInvariant
 
 Init ==
-    /\ hashFunction = [block \in N!Block |-> N!NoHash]
+    /\ hashFunction = [hash \in Hash |-> N!NoBlock]
     /\ N!Init
 
 StutterWhenHashesDepleted ==
