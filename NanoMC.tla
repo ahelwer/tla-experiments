@@ -2,7 +2,8 @@
 
 EXTENDS
     Naturals,
-    Sequences
+    Sequences,
+    FiniteSets
 
 CONSTANTS
     CalculateHash(_,_,_),
@@ -18,28 +19,25 @@ VARIABLES
     distributedLedger,
     received
 
+ASSUME
+    /\ MaxHashCount \in Nat
+    /\ Cardinality(PrivateKey) = Cardinality(PublicKey)
+    /\ Cardinality(PrivateKey) <= Cardinality(Node)
+    /\ GenesisBalance \in Nat
+
 -----------------------------------------------------------------------------
 
-Hash == 1 .. MaxHashCount
-
-UndefinedHashesExist ==
-    Len(hashFunction) < MaxHashCount
-
-HashIsDefined(block) ==
-    /\ \E h \in DOMAIN hashFunction : hashFunction[h] = block
-
-HashOf(block) ==
-    CHOOSE h \in DOMAIN hashFunction : hashFunction[h] = block
-
-CalculateHashImpl(block, oldLastHash, newLastHash) ==
-    IF HashIsDefined(block)
-    THEN
-        /\ newLastHash = HashOf(block)
-        /\ UNCHANGED hashFunction
+RECURSIVE ReduceSet(_,_,_)
+ReduceSet(op(_, _), set, acc) ==
+    IF set = {}
+    THEN acc
     ELSE
-        /\ UndefinedHashesExist
-        /\ hashFunction' = Append(hashFunction, block)
-        /\ newLastHash = Len(hashFunction')
+        LET x == CHOOSE x \in set : TRUE IN
+        op(x, ReduceSet(op, set \ {x}, acc))
+
+Hash ==
+    [account    : PublicKey,
+    sequence    : 1 .. MaxHashCount]
 
 KeyPair ==
     CHOOSE mapping \in [PrivateKey -> PublicKey] :
@@ -55,15 +53,48 @@ Ownership ==
 
 N == INSTANCE Nano
 
+UndefinedHashesExist ==
+    /\ \E key \in PublicKey : Len(hashFunction[key]) < MaxHashCount
+
+HashIsDefined(block) ==
+    /\ \E hash \in Hash :
+        /\ hash.sequence \in DOMAIN hashFunction[hash.account]
+        /\ hashFunction[hash.account][hash.sequence] = block
+
+HashOf(block) ==
+    CHOOSE hash \in Hash :
+        /\ hash.sequence \in DOMAIN hashFunction[hash.account]
+        /\ hashFunction[hash.account][hash.sequence] = block
+
+PublicKeyOf(block) ==
+    IF block.type \in {"genesis", "open"}
+    THEN block.account
+    ELSE block.previous.account
+
+CalculateHashImpl(block, oldLastHash, newLastHash) ==
+    IF HashIsDefined(block)
+    THEN
+        /\ newLastHash = HashOf(block)
+        /\ UNCHANGED hashFunction
+    ELSE
+        LET publicKey == PublicKeyOf(block) IN
+        /\ Len(hashFunction[publicKey]) < MaxHashCount
+        /\ hashFunction' =
+            [hashFunction EXCEPT
+                ![publicKey] = Append(@, block)]
+        /\ newLastHash =
+            [account    |-> publicKey,
+            sequence    |-> Len(hashFunction'[publicKey])]
+
 TypeInvariant ==
-    /\ hashFunction \in Seq(N!Block)
+    /\ hashFunction \in [PublicKey -> Seq(N!Block)]
     /\ N!TypeInvariant
 
 SafetyInvariant ==
     /\ N!SafetyInvariant
 
 Init ==
-    /\ hashFunction = <<>>
+    /\ hashFunction = [key \in PublicKey |-> <<>>]
     /\ N!Init
 
 StutterWhenHashesDepleted ==
@@ -76,5 +107,8 @@ Next ==
     IF UndefinedHashesExist
     THEN N!Next
     ELSE StutterWhenHashesDepleted
-        
+
+NanoView ==
+    <<hashFunction, distributedLedger, received>>
+
 =============================================================================

@@ -21,72 +21,11 @@ VARIABLES
 ASSUME
     /\ \A data, oldHash, newHash :
         /\ CalculateHash(data, oldHash, newHash) \in BOOLEAN
-    /\ KeyPair \subseteq [private : PrivateKey, public : PublicKey]
     /\ KeyPair \in [PrivateKey -> PublicKey]
-    /\ Ownership \in [Node -> KeyPair]
+    /\ GenesisBalance \in Nat
+    /\ Ownership \in [Node -> PrivateKey]
 
 -----------------------------------------------------------------------------
-
-(***************************************************************************)
-(* Defines the set of protocol-conforming blocks.                          *)
-(***************************************************************************)
-
-AccountBalance == 0 .. GenesisBalance
-
-BlockType ==
-    {"genesis",
-    "open",
-    "send",
-    "receive",
-    "change"}
-
-GenesisBlock ==
-    [type       : {"genesis"},
-    account     : PublicKey,
-    balance     : {GenesisBalance}]
-
-OpenBlock ==
-    [account    : PublicKey,
-    source      : Hash,
-    rep         : PublicKey,
-    type        : {"open"}]
-
-SendBlock ==
-    [previous   : Hash,
-    balance     : AccountBalance,
-    destination : PublicKey,
-    type        : {"send"}]
-
-ReceiveBlock ==
-    [previous   : Hash,
-    source      : Hash,
-    type        : {"receive"}]
-
-ChangeRepBlock ==
-    [previous   : Hash,
-    rep         : PublicKey,
-    type        : {"change"}]
-
-Block ==
-    GenesisBlock
-    \cup OpenBlock
-    \cup SendBlock
-    \cup ReceiveBlock
-    \cup ChangeRepBlock
-
-Signature ==
-    [data       : Hash,
-    signedWith  : PrivateKey]
-
-SignedBlock ==
-    [block      : Block,
-    signature   : Signature]
-
-NoBlock == CHOOSE b : b \notin SignedBlock
-
-NoHash == CHOOSE h : h \notin Hash
-
-Ledger == [Hash -> SignedBlock \cup {NoBlock}]
 
 (***************************************************************************)
 (* Functions to sign hashes with private key and validate signatures       *)
@@ -101,6 +40,60 @@ ValidateSignature(signature, expectedPublicKey, expectedHash) ==
     LET publicKey == KeyPair[signature.signedWith] IN
     /\ publicKey = expectedPublicKey
     /\ signature.data = expectedHash
+
+Signature ==
+    [data       : Hash,
+    signedWith  : PrivateKey]
+
+(***************************************************************************)
+(* Defines the set of protocol-conforming blocks.                          *)
+(***************************************************************************)
+
+AccountBalance == 0 .. GenesisBalance
+
+GenesisBlock ==
+    [type       : {"genesis"},
+    account     : PublicKey,
+    balance     : {GenesisBalance}]
+
+SendBlock ==
+    [previous   : Hash,
+    balance     : AccountBalance,
+    destination : PublicKey,
+    type        : {"send"}]
+
+OpenBlock ==
+    [account    : PublicKey,
+    source      : Hash,
+    rep         : PublicKey,
+    type        : {"open"}]
+
+ReceiveBlock ==
+    [previous   : Hash,
+    source      : Hash,
+    type        : {"receive"}]
+
+ChangeRepBlock ==
+    [previous   : Hash,
+    rep         : PublicKey,
+    type        : {"change"}]
+
+Block ==
+    GenesisBlock
+    \cup SendBlock
+    \cup OpenBlock
+    \cup ReceiveBlock
+    \cup ChangeRepBlock
+
+SignedBlock ==
+    [block      : Block,
+    signature   : Signature]
+
+NoBlock == CHOOSE b : b \notin SignedBlock
+
+NoHash == CHOOSE h : h \notin Hash
+
+Ledger == [Hash -> SignedBlock \cup {NoBlock}]
 
 (***************************************************************************)
 (* Utility functions to calculate block lattice properties.                *)
@@ -213,6 +206,7 @@ SafetyInvariant ==
 (***************************************************************************)
 (* Creates the genesis block.                                              *)
 (***************************************************************************)
+
 CreateGenesisBlock(privateKey) ==
     LET publicKey == KeyPair[privateKey] IN
     LET genesisBlock ==
@@ -277,9 +271,8 @@ ProcessOpenBlock(node, signedBlock) ==
     /\ CalculateHash(block, lastHash, lastHash')
     /\ ValidateSignature(signedBlock.signature, block.account, lastHash')
     /\ distributedLedger' =
-        [distributedLedger EXCEPT ![node] =
-            [@ EXCEPT ![lastHash'] =
-                signedBlock]]
+        [distributedLedger EXCEPT
+            ![node][lastHash'] = signedBlock]
 
 (***************************************************************************)
 (* Creation, validation, and confirmation of send blocks. Checks include:  *)
@@ -329,9 +322,8 @@ ProcessSendBlock(node, signedBlock) ==
         PublicKeyOf(ledger, block.previous),
         lastHash')
     /\ distributedLedger' =
-        [distributedLedger EXCEPT ![node] =
-            [@ EXCEPT ![lastHash'] =
-                signedBlock]]
+        [distributedLedger EXCEPT
+            ![node][lastHash'] = signedBlock]
 
 (***************************************************************************)
 (* Creation, validation, & confirmation of receive blocks. Checks include: *)
@@ -384,9 +376,8 @@ ProcessReceiveBlock(node, signedBlock) ==
         PublicKeyOf(ledger, block.previous),
         lastHash')
     /\ distributedLedger' =
-        [distributedLedger EXCEPT ![node] =
-            [@ EXCEPT ![lastHash'] =
-                signedBlock]]
+        [distributedLedger EXCEPT
+            ![node][lastHash'] = signedBlock]
 
 (***************************************************************************)
 (* Creation, validation, & confirmation of change blocks. Checks include:  *)
@@ -432,8 +423,8 @@ ProcessChangeRepBlock(node, signedBlock) ==
         PublicKeyOf(ledger, block.previous),
         lastHash')
     /\ distributedLedger' =
-        [distributedLedger EXCEPT ![node] =
-            [@ EXCEPT ![lastHash'] = signedBlock]]
+        [distributedLedger EXCEPT
+            ![node][lastHash'] = signedBlock]
 
 (***************************************************************************)
 (* Top-level actions.                                                      *)
